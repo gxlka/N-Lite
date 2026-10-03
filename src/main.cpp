@@ -101,6 +101,7 @@ static DWORD gHoveredPid=0;
 static std::unordered_map<std::wstring,HICON> gProcessIcons;
 static std::atomic<bool> gUpdateAvailable{false};
 static std::atomic<bool> gUpdateCheckSucceeded{false};
+static std::atomic<bool> gUpdateCheckNoRelease{false};
 static std::atomic<bool> gUpdateCheckInProgress{false};
 static std::wstring gLatestVersion, gLatestUrl;
 static bool gTimerNeed = false;
@@ -630,8 +631,10 @@ static bool VersionNewer(const std::wstring& latest,const std::wstring& current)
 }
 static void CheckForUpdatesAsync() {
     if(gUpdateCheckInProgress.exchange(true))return;
+    gUpdateCheckNoRelease.store(false,std::memory_order_release);
     std::thread([](){
-        std::wstring latest,url;HINTERNET session=WinHttpOpen(L"N-Lite",WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
+        std::wstring latest,url;bool noRelease=false;
+        HINTERNET session=WinHttpOpen(L"N-Lite",WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
         if(session){
             WinHttpSetTimeouts(session,4000,4000,4000,6000);
             HINTERNET conn=WinHttpConnect(session,L"api.github.com",INTERNET_DEFAULT_HTTPS_PORT,0);
@@ -641,15 +644,18 @@ static void CheckForUpdatesAsync() {
                     WinHttpAddRequestHeaders(req,L"Accept: application/vnd.github+json\r\nUser-Agent: N-Lite\r\n",static_cast<DWORD>(-1),WINHTTP_ADDREQ_FLAG_ADD);
                     if(WinHttpSendRequest(req,WINHTTP_NO_ADDITIONAL_HEADERS,0,WINHTTP_NO_REQUEST_DATA,0,0,0)&&WinHttpReceiveResponse(req,nullptr)){
                         DWORD code=0,cb=sizeof(code);
-                        if(WinHttpQueryHeaders(req,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,nullptr,&code,&cb,nullptr)&&code==200){
-                            std::string body;DWORD available=0;
-                            while(WinHttpQueryDataAvailable(req,&available)&&available){
-                                size_t old=body.size();body.resize(old+available);DWORD got=0;
-                                if(!WinHttpReadData(req,&body[old],available,&got)){body.resize(old);break;}
-                                body.resize(old+got);
+                        if(WinHttpQueryHeaders(req,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,nullptr,&code,&cb,nullptr)){
+                            if(code==404)noRelease=true;
+                            else if(code==200){
+                                std::string body;DWORD available=0;
+                                while(WinHttpQueryDataAvailable(req,&available)&&available){
+                                    size_t old=body.size();body.resize(old+available);DWORD got=0;
+                                    if(!WinHttpReadData(req,&body[old],available,&got)){body.resize(old);break;}
+                                    body.resize(old+got);
+                                }
+                                std::string tag=JsonString(body,"tag_name"),link=JsonString(body,"html_url");
+                                latest.assign(tag.begin(),tag.end());url.assign(link.begin(),link.end());
                             }
-                            std::string tag=JsonString(body,"tag_name"),link=JsonString(body,"html_url");
-                            latest.assign(tag.begin(),tag.end());url.assign(link.begin(),link.end());
                         }
                     }
                     WinHttpCloseHandle(req);
@@ -660,8 +666,16 @@ static void CheckForUpdatesAsync() {
         }
         if(!latest.empty()&&!url.empty()){
             gUpdateCheckSucceeded.store(true,std::memory_order_release);
+            gUpdateCheckNoRelease.store(false,std::memory_order_release);
             if(VersionNewer(latest,APP_VERSION)){gLatestVersion=latest;gLatestUrl=url;gUpdateAvailable.store(true,std::memory_order_release);}
             else gUpdateAvailable.store(false,std::memory_order_release);
+        }else if(noRelease){
+            gUpdateCheckSucceeded.store(true,std::memory_order_release);
+            gUpdateCheckNoRelease.store(true,std::memory_order_release);
+            gUpdateAvailable.store(false,std::memory_order_release);
+        }else{
+            gUpdateCheckSucceeded.store(false,std::memory_order_release);
+            gUpdateCheckNoRelease.store(false,std::memory_order_release);
         }
         gUpdateCheckInProgress.store(false,std::memory_order_release);
         if(gWnd)PostMessageW(gWnd,WM_UPDATE_READY,0,0);
@@ -709,10 +723,16 @@ static void DrawHeader(HDC dc, int width,int height) {
     RECT top=R(188,0,width-188,48);Fill(dc,top,RGB(17,21,31));
     Line(dc,188,47,width,47,C_LINE);
     Txt(dc,L"N Lite",210,0,180,48,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    RECT update=R(width-211,9,194,30);
     if(gUpdateAvailable.load(std::memory_order_acquire)){
-        RECT pill=R(width-244,10,222,28);Round(dc,pill,RGB(58,49,31),RGB(117,91,48),14);
-        Txt(dc,L"↑  Update "+gLatestVersion+L" available",pill.left+8,pill.top,W(pill)-16,H(pill),C_AMBER,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-        AddHit(pill,ID_UPDATE);
+        Round(dc,update,RGB(58,49,31),RGB(117,91,48),9);
+        Txt(dc,L"↑  Update "+gLatestVersion+L" available",update.left+7,update.top,W(update)-14,H(update),C_AMBER,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        AddHit(update,ID_UPDATE);
+    }else{
+        bool checking=gUpdateCheckInProgress.load(std::memory_order_acquire);
+        Round(dc,update,checking?RGB(28,34,47):RGB(31,39,57),checking?C_LINE:C_ACCENT,9);
+        Txt(dc,checking?L"Checking for updates…":L"Check for updates",update.left+7,update.top,W(update)-14,H(update),checking?C_MUTED:C_TEXT,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        if(!checking)AddHit(update,ID_UPDATE_CHECK_NOW);
     }
 }
 static HICON GetProcessIcon(const ProcRow& p) {
@@ -900,8 +920,9 @@ static void DrawSettings(HDC dc,int cw) {
     std::wstring updateText;
     if(gUpdateCheckInProgress.load())updateText=L"Checking GitHub for updates…";
     else if(gUpdateAvailable.load())updateText=L"Version "+gLatestVersion+L" is ready to download.";
+    else if(gUpdateCheckNoRelease.load())updateText=L"No GitHub release has been published yet.";
     else if(gUpdateCheckSucceeded.load())updateText=L"You are up to date.";
-    else updateText=L"Update checks run automatically every six hours.";
+    else updateText=L"Update checks run at launch and every six hours. Select Check for updates to try again.";
     Txt(dc,updateText,card.left+20,card.top+111,W(card)-260,23,gUpdateAvailable.load()?C_GREEN:C_MUTED,gFontSmall);
     DrawButton(dc,R(card.right-204,card.top+48,178,38),
         gUpdateAvailable.load()?L"Download update":L"Check for updates",
