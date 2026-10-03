@@ -203,7 +203,7 @@ static void UpdateMetrics() {
     }
     double sb = 0, freePages = 0; if (ReadStandby(sb, freePages)) { gMetrics.standby = sb; gMetrics.free = freePages; }
     double pagefilePages[2]={0,0};
-    if(EnumPageFilesW(PageFileUsageCallback,pagefilePages,0)){
+    if(EnumPageFilesW(PageFileUsageCallback,pagefilePages)){
         gMetrics.pagefileUsed=pagefilePages[0]*gPageSize;
         gMetrics.pagefileTotal=pagefilePages[1]*gPageSize;
     }
@@ -544,7 +544,7 @@ static void CheckForUpdatesAsync() {
             if(conn){
                 HINTERNET req=WinHttpOpenRequest(conn,L"GET",L"/repos/gxlka/N-Lite/releases/latest",nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);
                 if(req){
-                    WinHttpAddRequestHeaders(req,L"Accept: application/vnd.github+json\r\nUser-Agent: N-Lite\r\n",-1,WINHTTP_ADDREQ_FLAG_ADD);
+                    WinHttpAddRequestHeaders(req,L"Accept: application/vnd.github+json\r\nUser-Agent: N-Lite\r\n",static_cast<DWORD>(-1),WINHTTP_ADDREQ_FLAG_ADD);
                     if(WinHttpSendRequest(req,WINHTTP_NO_ADDITIONAL_HEADERS,0,WINHTTP_NO_REQUEST_DATA,0,0,0)&&WinHttpReceiveResponse(req,nullptr)){
                         DWORD code=0,cb=sizeof(code);
                         if(WinHttpQueryHeaders(req,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,nullptr,&code,&cb,nullptr)&&code==200){
