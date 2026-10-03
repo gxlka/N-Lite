@@ -105,6 +105,7 @@ static std::atomic<bool> gUpdateCheckNoRelease{false};
 static std::atomic<bool> gUpdateCheckInProgress{false};
 static std::wstring gLatestVersion, gLatestUrl;
 static bool gTimerNeed = false;
+static HANDLE gElevatedPurgeProcess = nullptr;
 static unsigned gThresholdMB = 4096, gIntervalSec = 60;
 static ULONG gTimerResolution=5000, gTimerApplied=5000, gTimerMinResolution=5000, gTimerMaxResolution=156250;
 static DWORD gLastRefresh = 0;
@@ -190,9 +191,43 @@ static bool ReadStandby(double& out, double& freeOut) {
     out = static_cast<double>(pages) * gPageSize; freeOut = static_cast<double>(info.free) * gPageSize; return true;
 }
 static LONG PurgeStandby() {
+    // SystemMemoryListInformation requires SeProfileSingleProcessPrivilege.
+    // Merely running elevated does not guarantee that this privilege is enabled.
     if (!gNtSetSys) return static_cast<LONG>(0xC0000002L);
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES, &token))
+        return static_cast<LONG>(0xC0000022L);
+
+    LUID luid{};
+    if (!LookupPrivilegeValueW(nullptr, L"SeProfileSingleProcessPrivilege", &luid)) {
+        CloseHandle(token);
+        return static_cast<LONG>(0xC0000061L);
+    }
+
+    TOKEN_PRIVILEGES requested{};
+    requested.PrivilegeCount = 1;
+    requested.Privileges[0].Luid = luid;
+    requested.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    TOKEN_PRIVILEGES previous{};
+    DWORD previousSize = 0;
+    SetLastError(ERROR_SUCCESS);
+    if (!AdjustTokenPrivileges(token, FALSE, &requested, sizeof(previous), &previous, &previousSize)) {
+        CloseHandle(token);
+        return static_cast<LONG>(0xC0000022L);
+    }
+    if (GetLastError() == ERROR_NOT_ALL_ASSIGNED) {
+        CloseHandle(token);
+        return static_cast<LONG>(0xC0000061L);
+    }
+
     ULONG cmd = 4; // MemoryPurgeStandbyList
-    return gNtSetSys(80, &cmd, sizeof(cmd));
+    LONG status = gNtSetSys(80, &cmd, sizeof(cmd));
+    if (previous.PrivilegeCount) {
+        SetLastError(ERROR_SUCCESS);
+        AdjustTokenPrivileges(token, FALSE, &previous, 0, nullptr, nullptr);
+    }
+    CloseHandle(token);
+    return status;
 }
 static bool IsNtOk(LONG s) { return s >= 0; }
 static BOOL CALLBACK PageFileUsageCallback(PVOID context, PENUM_PAGE_FILE_INFORMATION info, LPCWSTR) {
@@ -310,8 +345,8 @@ static void RefreshProcesses() {
         if(gSortColumn==0)cmp=_wcsicmp(a.name.c_str(),b.name.c_str());
         else if(gSortColumn==1)cmp=a.pid<b.pid?-1:(a.pid>b.pid?1:0);
         else if(gSortColumn==2)cmp=a.cpu<b.cpu?-1:(a.cpu>b.cpu?1:0);
-        else if(gSortColumn==3){SIZE_T av=a.hasChildren&&!gExpanded[a.pid]?a.treeWorking:a.working,bv=b.hasChildren&&!gExpanded[b.pid]?b.treeWorking:b.working;cmp=av<bv?-1:(av>bv?1:0);}
-        else {SIZE_T av=a.hasChildren&&!gExpanded[a.pid]?a.treePrivateBytes:a.privateBytes,bv=b.hasChildren&&!gExpanded[b.pid]?b.treePrivateBytes:b.privateBytes;cmp=av<bv?-1:(av>bv?1:0);}
+        else if(gSortColumn==3){SIZE_T av=a.hasChildren?a.treeWorking:a.working,bv=b.hasChildren?b.treeWorking:b.working;cmp=av<bv?-1:(av>bv?1:0);}
+        else {SIZE_T av=a.hasChildren?a.treePrivateBytes:a.privateBytes,bv=b.hasChildren?b.treePrivateBytes:b.privateBytes;cmp=av<bv?-1:(av>bv?1:0);}
         if(cmp==0)cmp=_wcsicmp(a.name.c_str(),b.name.c_str());
         return gSortDescending?cmp>0:cmp<0;
     };
@@ -562,21 +597,77 @@ static void ShowWindowFromTray() {
     ShowWindow(gWnd, SW_SHOW); ShowWindow(gWnd, SW_RESTORE); SetForegroundWindow(gWnd);
 }
 static void HideToTray() { AddTray(); ShowWindow(gWnd, SW_HIDE); }
-static void RequestElevatedPurge() {
-    HINSTANCE r = ShellExecuteW(gWnd, L"runas", gExePath.c_str(), L"--purge-once", nullptr, SW_HIDE);
-    if (reinterpret_cast<INT_PTR>(r) > 32) gStatus = L"Elevated one-shot cleaner started. Approve the Windows prompt.";
-    else gStatus = L"Elevation was cancelled or could not be started.";
-}
-static void DoPurge(bool allowPrompt) {
-    LONG s = PurgeStandby();
-    if (IsNtOk(s)) {
-        gPurgeLatched = true; gLastPurge = GetTickCount64(); gStatus = L"Standby list purge requested successfully.";
-    } else {
-        gStatus = IsAdmin() ? L"Windows denied the standby purge request." : L"Standby purge needs administrator access.";
-        if (allowPrompt && !IsAdmin()) {
-            int answer = MessageBoxW(gWnd, L"Windows denied the standby purge. Run a one-shot elevated purge now?", L"N-Lite", MB_YESNO | MB_ICONQUESTION);
-            if (answer == IDYES) RequestElevatedPurge();
+static bool RequestElevatedPurge() {
+    if (gElevatedPurgeProcess) {
+        if (WaitForSingleObject(gElevatedPurgeProcess, 0) == WAIT_TIMEOUT) {
+            gStatus = L"An elevated standby purge is already running.";
+            return false;
         }
+        CloseHandle(gElevatedPurgeProcess);
+        gElevatedPurgeProcess = nullptr;
+    }
+    SHELLEXECUTEINFOW execute{};
+    execute.cbSize = sizeof(execute);
+    execute.fMask = SEE_MASK_NOCLOSEPROCESS;
+    execute.hwnd = gWnd;
+    execute.lpVerb = L"runas";
+    execute.lpFile = gExePath.c_str();
+    execute.lpParameters = L"--purge-once";
+    execute.nShow = SW_HIDE;
+    if (!ShellExecuteExW(&execute)) {
+        DWORD error = GetLastError();
+        gStatus = error == ERROR_CANCELLED
+            ? L"Administrator approval was cancelled."
+            : L"Could not start the elevated standby cleaner.";
+        return false;
+    }
+    gElevatedPurgeProcess = execute.hProcess;
+    gStatus = L"Waiting for the elevated standby purge to finish…";
+    return true;
+}
+static void PollElevatedPurge() {
+    if (!gElevatedPurgeProcess || WaitForSingleObject(gElevatedPurgeProcess, 0) != WAIT_OBJECT_0) return;
+    DWORD result = 1;
+    GetExitCodeProcess(gElevatedPurgeProcess, &result);
+    CloseHandle(gElevatedPurgeProcess);
+    gElevatedPurgeProcess = nullptr;
+    if (result == 0) {
+        gPurgeLatched = true;
+        gLastPurge = GetTickCount64();
+        UpdateMetrics();
+        gStatus = L"Elevated standby purge completed. Standby memory is now " + Bytes(gMetrics.standby) + L".";
+    } else if (result == 0xC0000061u) {
+        gStatus = L"Windows still denied the standby purge privilege, even when elevated.";
+    } else {
+        std::wostringstream msg;
+        msg << L"Elevated standby purge failed (NTSTATUS 0x" << std::hex << std::uppercase << result << L").";
+        gStatus = msg.str();
+    }
+}
+static void DoPurge() {
+    UpdateMetrics();
+    if (gMetrics.standby < static_cast<double>(gPageSize)) {
+        gStatus = L"The standby list is already empty.";
+        return;
+    }
+    const double before = gMetrics.standby;
+    LONG status = PurgeStandby();
+    if (IsNtOk(status)) {
+        gPurgeLatched = true;
+        gLastPurge = GetTickCount64();
+        UpdateMetrics();
+        double released = (std::max)(0.0, before - gMetrics.standby);
+        gStatus = released > 0
+            ? L"Standby list cleaned. Released " + Bytes(released) + L"."
+            : L"Windows accepted the purge, but standby memory is now " + Bytes(gMetrics.standby) + L".";
+    } else if ((status == static_cast<LONG>(0xC0000061L) || status == static_cast<LONG>(0xC0000022L)) && !IsAdmin()) {
+        RequestElevatedPurge();
+    } else if (status == static_cast<LONG>(0xC0000061L)) {
+        gStatus = L"Windows denied SeProfileSingleProcessPrivilege. Check the account's Windows security policy.";
+    } else {
+        std::wostringstream msg;
+        msg << L"Standby purge failed (NTSTATUS 0x" << std::hex << std::uppercase << static_cast<DWORD>(status) << L").";
+        gStatus = msg.str();
     }
 }
 static void OpenAffinityMenu(ProcRow* p, POINT pt) {
@@ -1180,7 +1271,7 @@ static void HandleClick(int x,int y,bool dbl) {
     else if(id==ID_AUTO)SaveToggleAuto();
     else if(id==ID_INTERVAL_FIELD){gIntervalOpen=!gIntervalOpen;gIntervalHover=-1;}
     else if(id==ID_INTERVAL_OPTION){gIntervalSec=target->data;gIntervalOpen=false;gIntervalHover=-1;SaveSettings();gStatus=L"Automatic clean interval saved.";}
-    else if(id==ID_PURGE)DoPurge(true);
+    else if(id==ID_PURGE)DoPurge();
     else if(id==ID_ELEVATE)RequestElevatedPurge();
     else if(id==ID_AUTOSTART){
         bool next=!gAutoStart;
@@ -1221,9 +1312,15 @@ static void HandleClick(int x,int y,bool dbl) {
     else if(id==100||id==101){
         gSelectedPid=target->data;
         if((id==101&&!dbl)||(id==100&&dbl)){
+            auto currentRow=std::find_if(gVisible.begin(),gVisible.end(),[](const ProcRow& row){return row.pid==gSelectedPid;});
+            int screenRow=currentRow==gVisible.end()?0:static_cast<int>(currentRow-gVisible.begin())-gScroll;
             auto p=std::find_if(gProcs.begin(),gProcs.end(),[&](const ProcRow& a){return a.pid==gSelectedPid;});
-            if(p!=gProcs.end()&&p->hasChildren)gExpanded[p->pid]=!gExpanded[p->pid];
-            RefreshProcesses();
+            if(p!=gProcs.end()&&p->hasChildren){
+                gExpanded[p->pid]=!gExpanded[p->pid];
+                RefreshProcesses();
+                auto anchored=std::find_if(gVisible.begin(),gVisible.end(),[](const ProcRow& row){return row.pid==gSelectedPid;});
+                if(anchored!=gVisible.end())gScroll=(std::max)(0,static_cast<int>(anchored-gVisible.begin())-screenRow);
+            }
         }
     }
     InvalidateRect(gWnd,nullptr,FALSE);
@@ -1274,6 +1371,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
     case WM_TIMER:
         if(wp==TIMER_UPDATE_CHECK){CheckForUpdatesAsync();return 0;}
         if(wp==TIMER_REFRESH){
+            PollElevatedPurge();
             if(IsWindowVisible(h))UpdateMetrics();
             if((IsWindowVisible(h)&&gPage==1)||(gHasProcessOverrides&&GetTickCount()-gLastRefresh>=5000))RefreshProcesses();
             if(gAutoPurge){
@@ -1352,6 +1450,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
     }
     case WM_UPDATE_READY:InvalidateRect(h,nullptr,FALSE);return 0;
     case WM_DESTROY:
+        if(gElevatedPurgeProcess){CloseHandle(gElevatedPurgeProcess);gElevatedPurgeProcess=nullptr;}
         if(gPopup.hwnd)DestroyWindow(gPopup.hwnd);
         KillTimer(h,TIMER_REFRESH);KillTimer(h,TIMER_UPDATE_CHECK);SetTimerRequest(false);RemoveTray();
         for(auto& kv:gProcessIcons)if(kv.second)DestroyIcon(kv.second);
@@ -1365,7 +1464,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
 int WINAPI wWinMain(HINSTANCE inst,HINSTANCE, PWSTR cmd,int show) {
     gExePath.resize(32768);DWORD n=GetModuleFileNameW(nullptr,gExePath.data(),static_cast<DWORD>(gExePath.size()));gExePath.resize(n);
     std::wstring args=cmd?cmd:L"";
-    if(args.find(L"--purge-once")!=std::wstring::npos){LoadNt();return IsNtOk(PurgeStandby())?0:1;}
+    if(args.find(L"--purge-once")!=std::wstring::npos){LoadNt();LONG status=PurgeStandby();return IsNtOk(status)?0:static_cast<int>(status);}
     if(args.find(L"--install-auto-task")!=std::wstring::npos)return InstallAutoCleanTask()?0:1;
     if(args.find(L"--auto-clean-check")!=std::wstring::npos){LoadNt();RunAutoCleanCheck();return 0;}
     gMutex=CreateMutexW(nullptr,TRUE,L"Local\\N-Lite-Single-Instance");
