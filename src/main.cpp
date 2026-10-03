@@ -166,10 +166,10 @@ static void UpdateMetrics() {
     }
     PERFORMANCE_INFORMATION p{}; p.cb = sizeof(p);
     if (GetPerformanceInfo(&p, sizeof(p))) {
-        gPageSize = p.PageSize ? p.PageSize : 4096;
+        gPageSize = static_cast<DWORD>(p.PageSize ? p.PageSize : 4096);
         gMetrics.free = static_cast<double>(p.PhysicalAvailable) * gPageSize;
-        gMetrics.commit = static_cast<double>(p.PagefileUsage) * gPageSize;
-        gMetrics.commitLimit = static_cast<double>(p.PagefileTotal) * gPageSize;
+        gMetrics.commit = static_cast<double>(p.CommitTotal) * gPageSize;
+        gMetrics.commitLimit = static_cast<double>(p.CommitLimit) * gPageSize;
     }
     double sb = 0, freePages = 0; if (ReadStandby(sb, freePages)) { gMetrics.standby = sb; gMetrics.free = freePages; }
 }
@@ -269,8 +269,8 @@ static void SaveSettings() {
 }
 static void LoadSettings() {
     DWORD v = 0; RegReadDword(L"AutoPurge", v); gAutoPurge = v != 0;
-    v = 4096; RegReadDword(L"ThresholdMB", v); gThresholdMB = (std::max)(256u, (std::min)(65536u, v));
-    v = 60; RegReadDword(L"IntervalSec", v); gIntervalSec = (std::max)(15u, (std::min)(3600u, v));
+    v = 4096; RegReadDword(L"ThresholdMB", v); gThresholdMB = static_cast<unsigned>((std::max)(256u, (std::min)(65536u, static_cast<unsigned>(v))));
+    v = 60; RegReadDword(L"IntervalSec", v); gIntervalSec = static_cast<unsigned>((std::max)(15u, (std::min)(3600u, static_cast<unsigned>(v))));
 }
 static bool SetAutoStart(bool on) {
     HKEY k; const wchar_t* sub = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -432,7 +432,7 @@ static void DrawProcesses(HDC dc, int cw, int ch) {
     Txt(dc, L"MEMORY", tableX+tableW*75/100, tableY+8, tableW*22/100, 24, C_MUTED, gFontSmall, DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
     Line(dc, tableX+12, tableY+35, tableX+tableW-12, tableY+35, C_LINE);
     const int rowH = 43, firstY = tableY + 40;
-    int rows = (std::max)(0, (table.bottom - firstY - 10) / rowH);
+    int rows = (std::max)(0, static_cast<int>(table.bottom - firstY - 10) / rowH);
     if (gScroll >= static_cast<int>(gVisible.size())) gScroll = (std::max)(0, static_cast<int>(gVisible.size()) - rows);
     for (int i = 0; i < rows && gScroll + i < static_cast<int>(gVisible.size()); ++i) {
         const ProcRow& p = gVisible[gScroll + i]; int y = firstY + i*rowH;
@@ -577,7 +577,7 @@ static void DrawMemory(HDC dc, int cw, int ch) {
     Round(dc,R(knobX-7,sy-6,14,17),gTimerActive?C_ACCENT:C_MUTED,gTimerActive?C_ACCENT:C_MUTED,8);
     AddHit(R(sx,sy-14,sw,34),ID_TIMER_PLUS);
     Txt(dc,std::to_wstring(gTimerMs)+L" ms requested",sx+sw+16,sy-11,168,22,C_TEXT,gFontMed);
-    DrawButton(dc,R(sx+sw+194,sy-18,118,36),gTimerActive?L"Disable":"Enable",ID_TIMER_TOGGLE,gTimerActive?RGB(31,68,58):C_PANEL2,gTimerActive?C_GREEN:C_TEXT,gTimerActive);
+    DrawButton(dc,R(sx+sw+194,sy-18,118,36),gTimerActive?L"Disable":L"Enable",ID_TIMER_TOGGLE,gTimerActive?RGB(31,68,58):C_PANEL2,gTimerActive?C_GREEN:C_TEXT,gTimerActive);
     DrawButton(dc,R(timer.right-188,timer.top+17,169,32),gAutoStart?L"Startup: enabled":L"Start with Windows",ID_AUTOSTART,gAutoStart?RGB(31,68,58):C_PANEL2,gAutoStart?C_GREEN:C_TEXT,gAutoStart);
     ULONG maxRes=0,minRes=0,curRes=0; std::wstring current=L"unavailable";
     if(gNtQueryTimer && IsNtOk(gNtQueryTimer(&maxRes,&minRes,&curRes))){std::wostringstream q;q<<std::fixed<<std::setprecision(2)<<(curRes/10000.0)<<L" ms";current=q.str();}

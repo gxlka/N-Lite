@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure x64 release
-        run: cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -A x64
 
       - name: Build portable executable
         run: cmake --build build --config Release --parallel
