@@ -23,7 +23,7 @@ jobs:
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
             $version = $env:GITHUB_REF_NAME.TrimStart('v')
           } else {
-            $version = '0.2.0'
+            $version = '0.2.1'
           }
           "NLITE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
@@ -72,11 +72,13 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[publish-release:0.2.1]'))
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.2.1' }}
+          target_commitish: ${{ github.sha }}
           generate_release_notes: true
           files: |
             dist/N-Lite.exe

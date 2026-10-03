@@ -792,7 +792,8 @@ static void DrawButton(HDC dc, RECT r, const std::wstring& s, int id, COLORREF b
 }
 static RECT MainContent(int width) {
     int available=width-188;
-    int contentWidth=(std::max)(360,(std::min)(1040,available-112));
+    int margin=(std::min)(32,(std::max)(20,available/32));
+    int contentWidth=(std::max)(360,available-2*margin);
     int left=188+(available-contentWidth)/2;
     return R(left,0,contentWidth,0);
 }
@@ -840,7 +841,12 @@ static void DrawProcesses(HDC dc, int cw, int ch) {
     AddHit(search,ID_SEARCH);
     DrawButton(dc,R(content.right-108,142,108,38),L"Refresh",ID_REFRESH);
     RECT table=R(tableX,tableY,tableW,ch-tableY-25);Card(dc,table);
-    int nameX=tableX+56,pidX=tableX+tableW*56/100,cpuX=tableX+tableW*67/100,ramX=tableX+tableW*79/100,privateX=tableX+tableW*91/100;
+    int nameX=tableX+56;
+    const int columnGap=12,pidWidth=78,cpuWidth=84,memoryWidth=116,privateWidth=116;
+    int privateX=table.right-20-privateWidth;
+    int ramX=privateX-columnGap-memoryWidth;
+    int cpuX=ramX-columnGap-cpuWidth;
+    int pidX=cpuX-columnGap-pidWidth;
     auto sortLabel=[&](int col,const wchar_t* name){return std::wstring(name)+(gSortColumn==col?(gSortDescending?L"  ↓":L"  ↑"):L"");};
     COLORREF nameColor=gSortColumn==0?C_ACCENT:C_MUTED,pidColor=gSortColumn==1?C_ACCENT:C_MUTED;
     COLORREF cpuColor=gSortColumn==2?C_ACCENT:C_MUTED,memColor=gSortColumn==3?C_ACCENT:C_MUTED,privateColor=gSortColumn==4?C_ACCENT:C_MUTED;
