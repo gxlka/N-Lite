@@ -1,0 +1,38 @@
+name: Build N-Lite for Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure x64 release
+        run: cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build portable executable
+        run: cmake --build build --config Release --parallel
+
+      - name: Stage executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -LiteralPath build/Release/N-Lite.exe -Destination dist/N-Lite.exe
+
+      - name: Publish build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: N-Lite-Windows-x64
+          path: dist/N-Lite.exe
+          if-no-files-found: error
+          retention-days: 30
