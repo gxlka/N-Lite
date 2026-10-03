@@ -276,10 +276,19 @@ static void RefreshProcesses() {
     for(auto it=gCpuPrevious.begin();it!=gCpuPrevious.end();)if(!ids.count(it->first))it=gCpuPrevious.erase(it);else ++it;
     std::unordered_map<DWORD, std::vector<DWORD>> children;
     std::unordered_map<DWORD, size_t> index;
+    std::unordered_set<DWORD> groupedChildren;
     for (size_t i = 0; i < gProcs.size(); ++i) index[gProcs[i].pid] = i;
-    for (auto& p : gProcs) if (ids.count(p.ppid) && p.ppid != p.pid) {
+    for (auto& p : gProcs) {
+        auto parent = index.find(p.ppid);
+        if (p.ppid == p.pid || parent == index.end() || p.path.empty() || p.path == L"Path unavailable")
+            continue;
+        ProcRow& parentRow = gProcs[parent->second];
+        if (parentRow.path.empty() || parentRow.path == L"Path unavailable" ||
+            _wcsicmp(p.path.c_str(), parentRow.path.c_str()) != 0)
+            continue;
         children[p.ppid].push_back(p.pid);
-        gProcs[index[p.ppid]].hasChildren = true;
+        groupedChildren.insert(p.pid);
+        parentRow.hasChildren = true;
     }
     std::unordered_map<DWORD,std::pair<SIZE_T,SIZE_T>> totals;
     std::unordered_set<DWORD> calculating;
@@ -319,7 +328,7 @@ static void RefreshProcesses() {
         if (gExpanded[id] && children.count(id)) for (DWORD child : children[id]) walk(child, depth + 1);
     };
     std::vector<DWORD> roots;
-    for (auto& p : gProcs) if (!ids.count(p.ppid) || p.ppid == p.pid) roots.push_back(p.pid);
+    for (auto& p : gProcs) if (!groupedChildren.count(p.pid)) roots.push_back(p.pid);
     sortKids(roots);
     for (DWORD id : roots) walk(id, 0);
     for (auto& p : gProcs) if (!seen.count(p.pid)) walk(p.pid, 0);
@@ -723,17 +732,6 @@ static void DrawHeader(HDC dc, int width,int height) {
     RECT top=R(188,0,width-188,48);Fill(dc,top,RGB(17,21,31));
     Line(dc,188,47,width,47,C_LINE);
     Txt(dc,L"N Lite",210,0,180,48,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
-    RECT update=R(width-211,9,194,30);
-    if(gUpdateAvailable.load(std::memory_order_acquire)){
-        Round(dc,update,RGB(58,49,31),RGB(117,91,48),9);
-        Txt(dc,L"↑  Update "+gLatestVersion+L" available",update.left+7,update.top,W(update)-14,H(update),C_AMBER,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-        AddHit(update,ID_UPDATE);
-    }else{
-        bool checking=gUpdateCheckInProgress.load(std::memory_order_acquire);
-        Round(dc,update,checking?RGB(28,34,47):RGB(31,39,57),checking?C_LINE:C_ACCENT,9);
-        Txt(dc,checking?L"Checking for updates…":L"Check for updates",update.left+7,update.top,W(update)-14,H(update),checking?C_MUTED:C_TEXT,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-        if(!checking)AddHit(update,ID_UPDATE_CHECK_NOW);
-    }
 }
 static HICON GetProcessIcon(const ProcRow& p) {
     if(p.path.empty()||p.path==L"Path unavailable")return nullptr;
