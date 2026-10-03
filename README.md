@@ -15,9 +15,11 @@ Automatic standby cleaning requires an elevated scheduled task because Windows p
 
 ## Build
 
-Use the repository's GitHub Actions workflow to build the x64 portable executable. Each build is published as the N-Lite-Windows-x64 Actions artifact.
+Use the repository's GitHub Actions workflow to build the x64 portable executable and the Windows setup installer. Each build publishes both N-Lite.exe and N-Lite-Setup-x64.exe in the N-Lite-Windows-x64 Actions artifact.
 
-To publish an update, push a version tag such as v0.3.0. The workflow builds the tagged version and attaches dist/N-Lite.exe to a GitHub Release. N-Lite checks the latest release and shows an update button in the app when its version is newer.
+The installer installs per-user under LocalAppData, creates a Start Menu shortcut, and offers startup and desktop shortcut options. It does not require administrator rights.
+
+To publish an update, push a version tag such as v0.3.0. The workflow builds that version and attaches both the portable executable and N-Lite-Setup-x64.exe to a GitHub Release. N-Lite checks the latest release and shows an update button in the app when its version is newer.
 
 ## Runtime behavior
 
