@@ -10,6 +10,7 @@
 #include <dwmapi.h>
 #include <shlwapi.h>
 #include <winhttp.h>
+#include <wincrypt.h>
 #include <thread>
 #include <atomic>
 #include <array>
@@ -26,6 +27,7 @@
 #include <cwctype>
 #include <iterator>
 #include <utility>
+#include <memory>
 
 #pragma comment(lib, "psapi.lib")
 #pragma comment(lib, "shell32.lib")
@@ -44,6 +46,7 @@ static const wchar_t* APP_VERSION = NLITE_WIDEN(NLITE_VERSION);
 static const wchar_t* APP_CLASS = L"NLiteWindow";
 static const wchar_t* POPUP_CLASS = L"NLiteContextPopup";
 static const UINT WM_UPDATE_READY = WM_APP + 12;
+static const UINT WM_UPDATE_INSTALL_DONE = WM_APP + 13;
 static const UINT WM_TRAY = WM_APP + 11;
 static const UINT_PTR TIMER_REFRESH = 1, TIMER_UPDATE_CHECK = 2;
 static const int ID_PROCESSES = 1, ID_MEMORY = 2, ID_STARTUP = 3, ID_SETTINGS = 4, ID_REFRESH = 10, ID_SEARCH = 11;
@@ -103,7 +106,9 @@ static std::atomic<bool> gUpdateAvailable{false};
 static std::atomic<bool> gUpdateCheckSucceeded{false};
 static std::atomic<bool> gUpdateCheckNoRelease{false};
 static std::atomic<bool> gUpdateCheckInProgress{false};
-static std::wstring gLatestVersion, gLatestUrl;
+static std::wstring gLatestVersion, gInstallerUrl, gInstallerDigest, gUpdateInstallMessage;
+static std::atomic<bool> gUpdateInstallerMissing{false};
+static std::atomic<bool> gUpdateInstallInProgress{false};
 static bool gTimerNeed = false;
 static HANDLE gElevatedPurgeProcess = nullptr;
 static unsigned gThresholdMB = 4096, gIntervalSec = 60;
@@ -707,8 +712,8 @@ static void OpenPriorityMenu(ProcRow* p, POINT pt) {
     else if (cmd) gStatus = L"Windows denied the priority change.";
     DestroyMenu(m); CloseHandle(ph); InvalidateRect(gWnd, nullptr, FALSE);
 }
-static std::string JsonString(const std::string& json,const std::string& key) {
-    std::string marker="\""+key+"\"";size_t p=json.find(marker);if(p==std::string::npos)return {};
+static std::string JsonString(const std::string& json,const std::string& key,size_t from=0) {
+    std::string marker="\""+key+"\"";size_t p=json.find(marker,from);if(p==std::string::npos)return {};
     p=json.find(':',p+marker.size());if(p==std::string::npos)return {};p++;
     while(p<json.size()&&(json[p]==' '||json[p]=='\t'||json[p]=='\r'||json[p]=='\n'))p++;
     if(p>=json.size()||json[p]!='"')return {};p++;
@@ -729,14 +734,117 @@ static bool VersionNewer(const std::wstring& latest,const std::wstring& current)
     };
     auto a=parse(latest),b=parse(current);return a>b;
 }
+static bool VerifySha256File(const std::wstring& path,const std::string& digest) {
+    const std::string prefix="sha256:";
+    if(digest.compare(0,prefix.size(),prefix)!=0||digest.size()!=prefix.size()+64)return false;
+    std::string expected=digest.substr(prefix.size());
+    for(char& c:expected)if(c>='A'&&c<='F')c=static_cast<char>(c-'A'+'a');
+    HCRYPTPROV provider=0;HCRYPTHASH hash=0;
+    if(!CryptAcquireContextW(&provider,nullptr,nullptr,PROV_RSA_AES,CRYPT_VERIFYCONTEXT))return false;
+    bool ok=CryptCreateHash(provider,CALG_SHA_256,0,0,&hash)!=FALSE;
+    HANDLE file=INVALID_HANDLE_VALUE;
+    if(ok)file=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file==INVALID_HANDLE_VALUE)ok=false;
+    BYTE buffer[65536];DWORD got=0;
+    while(ok){
+        if(!ReadFile(file,buffer,sizeof(buffer),&got,nullptr)){ok=false;break;}
+        if(!got)break;
+        if(!CryptHashData(hash,buffer,got,0)){ok=false;break;}
+    }
+    BYTE value[32]{};DWORD valueSize=sizeof(value);
+    if(ok&&!CryptGetHashParam(hash,HP_HASHVAL,value,&valueSize,0))ok=false;
+    std::string actual;
+    if(ok){static const char hex[]="0123456789abcdef";actual.reserve(64);for(BYTE b:value){actual.push_back(hex[b>>4]);actual.push_back(hex[b&15]);}}
+    if(file!=INVALID_HANDLE_VALUE)CloseHandle(file);
+    if(hash)CryptDestroyHash(hash);
+    CryptReleaseContext(provider,0);
+    return ok&&actual==expected;
+}
+static bool DownloadVerifiedSetup(const std::wstring& url,const std::string& digest,std::wstring& output,std::wstring& error) {
+    URL_COMPONENTS parts{};parts.dwStructSize=sizeof(parts);
+    parts.dwSchemeLength=static_cast<DWORD>(-1);parts.dwHostNameLength=static_cast<DWORD>(-1);
+    parts.dwUrlPathLength=static_cast<DWORD>(-1);parts.dwExtraInfoLength=static_cast<DWORD>(-1);
+    if(!WinHttpCrackUrl(url.c_str(),0,0,&parts)||parts.nScheme!=INTERNET_SCHEME_HTTPS){error=L"The setup download URL is not a valid HTTPS address.";return false;}
+    std::wstring host(parts.lpszHostName,parts.dwHostNameLength);
+    std::wstring path(parts.lpszUrlPath,parts.dwUrlPathLength);
+    if(parts.dwExtraInfoLength)path.append(parts.lpszExtraInfo,parts.dwExtraInfoLength);
+    wchar_t tempDir[MAX_PATH+1]{},tempFile[MAX_PATH+1]{};
+    DWORD tempLength=GetTempPathW(MAX_PATH,tempDir);
+    if(!tempLength||tempLength>MAX_PATH||!GetTempFileNameW(tempDir,L"NLI",0,tempFile)){error=L"Could not create a temporary setup file.";return false;}
+    DeleteFileW(tempFile);
+    if(!PathRenameExtensionW(tempFile,L".exe")){error=L"Could not prepare the temporary setup file.";return false;}
+    output=tempFile;
+    HANDLE file=CreateFileW(output.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_TEMPORARY,nullptr);
+    if(file==INVALID_HANDLE_VALUE){output.clear();error=L"Could not open the temporary setup file.";return false;}
+    bool ok=false;uint64_t total=0;
+    HINTERNET session=WinHttpOpen(L"N-Lite updater",WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
+    if(session){
+        WinHttpSetTimeouts(session,10000,10000,15000,30000);
+        HINTERNET conn=WinHttpConnect(session,host.c_str(),parts.nPort,0);
+        if(conn){
+            HINTERNET request=WinHttpOpenRequest(conn,L"GET",path.c_str(),nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);
+            if(request){
+                WinHttpAddRequestHeaders(request,L"User-Agent: N-Lite updater\r\n",static_cast<DWORD>(-1),WINHTTP_ADDREQ_FLAG_ADD);
+                if(WinHttpSendRequest(request,WINHTTP_NO_ADDITIONAL_HEADERS,0,WINHTTP_NO_REQUEST_DATA,0,0,0)&&WinHttpReceiveResponse(request,nullptr)){
+                    DWORD code=0,cb=sizeof(code);
+                    if(WinHttpQueryHeaders(request,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,nullptr,&code,&cb,nullptr)&&code==200){
+                        ok=true;DWORD available=0;BYTE buffer[65536];
+                        while(ok&&WinHttpQueryDataAvailable(request,&available)&&available){
+                            DWORD remaining=available;
+                            while(ok&&remaining){
+                                DWORD amount=(std::min)(remaining,static_cast<DWORD>(sizeof(buffer))),got=0,written=0;
+                                if(!WinHttpReadData(request,buffer,amount,&got)||!got){ok=false;break;}
+                                total+=got;if(total>64ull*1024ull*1024ull){ok=false;break;}
+                                if(!WriteFile(file,buffer,got,&written,nullptr)||written!=got){ok=false;break;}
+                                remaining-=got;
+                            }
+                        }
+                        if(!total)ok=false;
+                    }
+                }
+                WinHttpCloseHandle(request);
+            }
+            WinHttpCloseHandle(conn);
+        }
+        WinHttpCloseHandle(session);
+    }
+    if(!CloseHandle(file))ok=false;
+    if(ok&&!VerifySha256File(output,digest)){ok=false;error=L"The downloaded setup did not match GitHub's SHA-256 checksum.";}
+    if(!ok){
+        DeleteFileW(output.c_str());output.clear();
+        if(error.empty())error=L"Could not download the N-Lite setup installer.";
+        return false;
+    }
+    return true;
+}
+struct UpdateInstallResult { bool ok=false;std::wstring path,message; };
+static void InstallLatestUpdate() {
+    bool expected=false;
+    if(!gUpdateAvailable.load(std::memory_order_acquire)||!gUpdateInstallInProgress.compare_exchange_strong(expected,true))return;
+    gUpdateInstallMessage.clear();
+    std::wstring url=gInstallerUrl;
+    std::string digest;
+    for(wchar_t c:gInstallerDigest)digest.push_back(static_cast<char>(c));
+    std::thread([url,digest](){
+        auto result=new UpdateInstallResult{};
+        result->ok=DownloadVerifiedSetup(url,digest,result->path,result->message);
+        if(!result->ok)gUpdateInstallInProgress.store(false,std::memory_order_release);
+        HWND target=gWnd;
+        if(!target||!PostMessageW(target,WM_UPDATE_INSTALL_DONE,0,reinterpret_cast<LPARAM>(result))){
+            if(result->ok&&!result->path.empty())DeleteFileW(result->path.c_str());
+            delete result;
+        }
+    }).detach();
+}
 static void CheckForUpdatesAsync() {
     if(gUpdateCheckInProgress.exchange(true))return;
     gUpdateCheckNoRelease.store(false,std::memory_order_release);
+    gUpdateInstallerMissing.store(false,std::memory_order_release);
     std::thread([](){
-        std::wstring latest,url;bool noRelease=false;
+        std::wstring latest,installerUrl,installerDigest;bool noRelease=false;
         HINTERNET session=WinHttpOpen(L"N-Lite",WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
         if(session){
-            WinHttpSetTimeouts(session,4000,4000,4000,6000);
+            WinHttpSetTimeouts(session,4000,4000,4000,10000);
             HINTERNET conn=WinHttpConnect(session,L"api.github.com",INTERNET_DEFAULT_HTTPS_PORT,0);
             if(conn){
                 HINTERNET req=WinHttpOpenRequest(conn,L"GET",L"/repos/gxlka/N-Lite/releases/latest",nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);
@@ -748,13 +856,22 @@ static void CheckForUpdatesAsync() {
                             if(code==404)noRelease=true;
                             else if(code==200){
                                 std::string body;DWORD available=0;
-                                while(WinHttpQueryDataAvailable(req,&available)&&available){
-                                    size_t old=body.size();body.resize(old+available);DWORD got=0;
-                                    if(!WinHttpReadData(req,&body[old],available,&got)){body.resize(old);break;}
+                                while(WinHttpQueryDataAvailable(req,&available)&&available&&body.size()<2*1024*1024){
+                                    size_t old=body.size(),amount=(std::min)(static_cast<size_t>(available),2*1024*1024-body.size());body.resize(old+amount);DWORD got=0;
+                                    if(!WinHttpReadData(req,&body[old],static_cast<DWORD>(amount),&got)){body.resize(old);break;}
                                     body.resize(old+got);
                                 }
-                                std::string tag=JsonString(body,"tag_name"),link=JsonString(body,"html_url");
-                                latest.assign(tag.begin(),tag.end());url.assign(link.begin(),link.end());
+                                std::string tag=JsonString(body,"tag_name");
+                                latest.assign(tag.begin(),tag.end());
+                                size_t asset=body.find("\"name\":\"N-Lite-Setup-x64.exe\"");
+                                if(asset!=std::string::npos){
+                                    std::string download=JsonString(body,"browser_download_url",asset);
+                                    std::string digest=JsonString(body,"digest",asset);
+                                    const std::string allowed="https://github.com/gxlka/N-Lite/releases/download/";
+                                    if(download.compare(0,allowed.size(),allowed)==0&&digest.compare(0,7,"sha256:")==0){
+                                        installerUrl.assign(download.begin(),download.end());installerDigest.assign(digest.begin(),digest.end());
+                                    }
+                                }
                             }
                         }
                     }
@@ -764,11 +881,19 @@ static void CheckForUpdatesAsync() {
             }
             WinHttpCloseHandle(session);
         }
-        if(!latest.empty()&&!url.empty()){
+        if(!latest.empty()){
+            bool newer=VersionNewer(latest,APP_VERSION);
             gUpdateCheckSucceeded.store(true,std::memory_order_release);
             gUpdateCheckNoRelease.store(false,std::memory_order_release);
-            if(VersionNewer(latest,APP_VERSION)){gLatestVersion=latest;gLatestUrl=url;gUpdateAvailable.store(true,std::memory_order_release);}
-            else gUpdateAvailable.store(false,std::memory_order_release);
+            if(newer){
+                gLatestVersion=latest;gInstallerUrl=installerUrl;gInstallerDigest=installerDigest;
+                bool ready=!installerUrl.empty()&&!installerDigest.empty();
+                gUpdateInstallerMissing.store(!ready,std::memory_order_release);
+                gUpdateAvailable.store(ready,std::memory_order_release);
+            }else{
+                gUpdateAvailable.store(false,std::memory_order_release);
+                gUpdateInstallerMissing.store(false,std::memory_order_release);
+            }
         }else if(noRelease){
             gUpdateCheckSucceeded.store(true,std::memory_order_release);
             gUpdateCheckNoRelease.store(true,std::memory_order_release);
@@ -780,10 +905,6 @@ static void CheckForUpdatesAsync() {
         gUpdateCheckInProgress.store(false,std::memory_order_release);
         if(gWnd)PostMessageW(gWnd,WM_UPDATE_READY,0,0);
     }).detach();
-}
-static void OpenLatestRelease() {
-    if(!gUpdateAvailable.load(std::memory_order_acquire)||gLatestUrl.empty())return;
-    ShellExecuteW(gWnd,L"open",gLatestUrl.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
 }
 static void DrawButton(HDC dc, RECT r, const std::wstring& s, int id, COLORREF bg = C_PANEL2, COLORREF fg = C_TEXT, bool accent = false) {
     Round(dc, r, bg, accent ? C_ACCENT : C_LINE, 9);
@@ -1014,13 +1135,16 @@ static void DrawSettings(HDC dc,int cw) {
     Txt(dc,L"Lightweight tools for memory and process management.",card.left+20,card.top+81,W(card)-40,21,C_MUTED,gFontSmall);
     std::wstring updateText;
     if(gUpdateCheckInProgress.load())updateText=L"Checking GitHub for updates…";
-    else if(gUpdateAvailable.load())updateText=L"Version "+gLatestVersion+L" is ready to download.";
+    else if(gUpdateInstallInProgress.load())updateText=L"Downloading and verifying the setup installer…";
+    else if(!gUpdateInstallMessage.empty())updateText=gUpdateInstallMessage;
+    else if(gUpdateAvailable.load())updateText=L"Version "+gLatestVersion+L" is ready to install.";
+    else if(gUpdateInstallerMissing.load())updateText=L"A newer version was found, but its verified setup installer is unavailable.";
     else if(gUpdateCheckNoRelease.load())updateText=L"No GitHub release has been published yet.";
     else if(gUpdateCheckSucceeded.load())updateText=L"You are up to date.";
     else updateText=L"Update checks run at launch and every six hours. Select Check for updates to try again.";
-    Txt(dc,updateText,card.left+20,card.top+111,W(card)-260,23,gUpdateAvailable.load()?C_GREEN:C_MUTED,gFontSmall);
+    Txt(dc,updateText,card.left+20,card.top+111,W(card)-260,23,(gUpdateAvailable.load()||gUpdateInstallInProgress.load())?C_GREEN:C_MUTED,gFontSmall);
     DrawButton(dc,R(card.right-204,card.top+48,178,38),
-        gUpdateAvailable.load()?L"Download update":L"Check for updates",
+        gUpdateInstallInProgress.load()?L"Please wait…":(gUpdateAvailable.load()?L"Install update":L"Check for updates"),
         gUpdateAvailable.load()?ID_UPDATE:ID_UPDATE_CHECK_NOW,C_ACCENT,RGB(255,255,255),true);
     RECT repo=R(content.left,326,W(content),88);Card(dc,repo);
     Txt(dc,L"Project",repo.left+20,repo.top+15,W(repo)-190,23,C_TEXT,gFontMed);
@@ -1268,7 +1392,7 @@ static void HandleClick(int x,int y,bool dbl) {
     else if(id==ID_PROCESSES){gPage=1;gSearchFocus=false;RefreshProcesses();}
     else if(id==ID_STARTUP){gPage=2;gSearchFocus=false;}
     else if(id==ID_SETTINGS){gPage=3;gSearchFocus=false;}
-    else if(id==ID_UPDATE)OpenLatestRelease();
+    else if(id==ID_UPDATE)InstallLatestUpdate();
     else if(id==ID_UPDATE_CHECK_NOW){CheckForUpdatesAsync();}
     else if(id==ID_OPEN_GITHUB)ShellExecuteW(gWnd,L"open",L"https://github.com/gxlka/N-Lite",nullptr,nullptr,SW_SHOWNORMAL);
     else if(id==ID_REFRESH){RefreshProcesses();UpdateMetrics();gStatus=L"Process list refreshed.";}
@@ -1455,6 +1579,26 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
         SelectObject(mem,old);DeleteObject(bm);DeleteDC(mem);EndPaint(h,&ps);return 0;
     }
     case WM_UPDATE_READY:InvalidateRect(h,nullptr,FALSE);return 0;
+    case WM_UPDATE_INSTALL_DONE: {
+        std::unique_ptr<UpdateInstallResult> result(reinterpret_cast<UpdateInstallResult*>(lp));
+        if(!result)return 0;
+        if(!result->ok){
+            gUpdateInstallMessage=result->message.empty()?L"Update download failed. Check your connection and try again.":result->message;
+            InvalidateRect(h,nullptr,FALSE);return 0;
+        }
+        SHELLEXECUTEINFOW execute{};execute.cbSize=sizeof(execute);execute.fMask=SEE_MASK_NOCLOSEPROCESS;
+        execute.lpVerb=L"open";execute.lpFile=result->path.c_str();
+        execute.lpParameters=L"/SP- /SILENT /SUPPRESSMSGBOXES /NORESTART";execute.nShow=SW_SHOWNORMAL;
+        if(!ShellExecuteExW(&execute)){
+            DWORD error=GetLastError();DeleteFileW(result->path.c_str());
+            gUpdateInstallMessage=L"Could not start the setup installer (Windows error "+std::to_wstring(error)+L").";
+            gUpdateInstallInProgress.store(false,std::memory_order_release);
+            InvalidateRect(h,nullptr,FALSE);return 0;
+        }
+        if(execute.hProcess)CloseHandle(execute.hProcess);
+        gUpdateInstallMessage=L"Installing "+gLatestVersion+L" and restarting N-Lite…";
+        gExiting=true;DestroyWindow(h);return 0;
+    }
     case WM_DESTROY:
         if(gElevatedPurgeProcess){CloseHandle(gElevatedPurgeProcess);gElevatedPurgeProcess=nullptr;}
         if(gPopup.hwnd)DestroyWindow(gPopup.hwnd);

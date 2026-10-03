@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.0"
+  #define MyAppVersion "0.2.2"
 #endif
 
 #define MyAppName "N-Lite"
@@ -46,6 +46,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\N-Lite.exe"; Description: "Launch N-Lite"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\N-Lite.exe"; Parameters: "--updated"; WorkingDir: "{app}"; Flags: nowait skipifnotsilent
 
 [UninstallRun]
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /F /TN ""N-Lite Auto Clean"""; Flags: runhidden; RunOnceId: "DeleteN-LiteAutoCleanTask"
