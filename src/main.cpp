@@ -46,6 +46,7 @@ static const UINT WM_UPDATE_READY = WM_APP + 12;
 static const UINT WM_TRAY = WM_APP + 11;
 static const UINT_PTR TIMER_REFRESH = 1, TIMER_UPDATE_CHECK = 2;
 static const int ID_PROCESSES = 1, ID_MEMORY = 2, ID_REFRESH = 10, ID_SEARCH = 11;
+static const int ID_SORT_NAME = 20, ID_SORT_PID = 21, ID_SORT_CPU = 22, ID_SORT_MEMORY = 23, ID_SORT_PRIVATE = 24;
 static const int ID_PURGE = 30, ID_AUTO = 31, ID_THRESHOLD_DOWN = 32, ID_THRESHOLD_UP = 33, ID_THRESHOLD_FIELD = 37;
 static const int ID_INTERVAL_DOWN = 34, ID_INTERVAL_UP = 35, ID_ELEVATE = 36;
 static const int ID_TIMER_TOGGLE = 40, ID_TIMER_MINUS = 41, ID_TIMER_PLUS = 42, ID_AUTOSTART = 43;
@@ -87,6 +88,8 @@ static std::unordered_map<DWORD, uint64_t> gCpuPrevious;
 static std::unordered_map<DWORD, bool> gExpanded;
 static Metrics gMetrics;
 static int gPage = 0, gScroll = 0;
+static int gSortColumn = 0;
+static bool gSortDescending = false;
 static DWORD gSelectedPid = 0;
 static std::wstring gSearch, gStatus = L"Ready";
 static bool gSearchFocus = false, gTrayAdded = false, gExiting = false, gAutoPurge = false, gAutoStart = false;
@@ -218,6 +221,8 @@ static void RefreshProcesses() {
     DWORD elapsed = gLastRefresh ? nowMs - gLastRefresh : 0;
     SYSTEM_INFO si{}; GetSystemInfo(&si); unsigned cpus = si.dwNumberOfProcessors ? si.dwNumberOfProcessors : 1;
     std::vector<ProcRow> fresh;
+    std::unordered_map<DWORD,double> previousCpu;
+    for(const auto& old:gProcs)previousCpu[old.pid]=old.cpu;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap != INVALID_HANDLE_VALUE) {
         PROCESSENTRY32W e{}; e.dwSize = sizeof(e);
@@ -235,10 +240,12 @@ static void RefreshProcesses() {
                 if (GetProcessTimes(ph, &c, &x, &k, &u)) {
                     uint64_t t = FtValue(k) + FtValue(u);
                     auto it = gCpuPrevious.find(p.pid);
-                    if (it != gCpuPrevious.end() && elapsed) {
+                    if (it != gCpuPrevious.end() && elapsed >= 1000) {
                         uint64_t diff = t >= it->second ? t - it->second : 0;
                         p.cpu = 100.0 * static_cast<double>(diff) / (static_cast<double>(elapsed) * 10000.0 * cpus);
                         if (p.cpu > 100.0) p.cpu = 100.0;
+                    } else {
+                        auto old=previousCpu.find(p.pid);if(old!=previousCpu.end())p.cpu=old->second;
                     }
                     gCpuPrevious[p.pid] = t;
                 }
@@ -260,9 +267,19 @@ static void RefreshProcesses() {
         children[p.ppid].push_back(p.pid);
         gProcs[index[p.ppid]].hasChildren = true;
     }
+    auto compareRows = [&](const ProcRow& a,const ProcRow& b) {
+        int cmp=0;
+        if(gSortColumn==0)cmp=_wcsicmp(a.name.c_str(),b.name.c_str());
+        else if(gSortColumn==1)cmp=a.pid<b.pid?-1:(a.pid>b.pid?1:0);
+        else if(gSortColumn==2)cmp=a.cpu<b.cpu?-1:(a.cpu>b.cpu?1:0);
+        else if(gSortColumn==3)cmp=a.working<b.working?-1:(a.working>b.working?1:0);
+        else cmp=a.privateBytes<b.privateBytes?-1:(a.privateBytes>b.privateBytes?1:0);
+        if(cmp==0)cmp=_wcsicmp(a.name.c_str(),b.name.c_str());
+        return gSortDescending?cmp>0:cmp<0;
+    };
     auto sortKids = [&](std::vector<DWORD>& v) {
         std::sort(v.begin(), v.end(), [&](DWORD a, DWORD b) {
-            return _wcsicmp(gProcs[index[a]].name.c_str(), gProcs[index[b]].name.c_str()) < 0;
+            return compareRows(gProcs[index[a]],gProcs[index[b]]);
         });
     };
     for (auto& kv : children) sortKids(kv.second);
@@ -587,9 +604,6 @@ static void DrawHeader(HDC dc, int width) {
         RECT pill=R(width-248,25,220,30);Round(dc,pill,RGB(62,50,31),RGB(134,101,51),15);
         Txt(dc,L"↑  Update "+gLatestVersion+L" available",pill.left+8,pill.top,W(pill)-16,H(pill),C_AMBER,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
         AddHit(pill,ID_UPDATE);
-    }else{
-        RECT pill=R(width-212,25,184,30);Round(dc,pill,RGB(23,45,43),RGB(38,90,76),15);
-        Txt(dc,L"●  RUNNING IN TRAY",pill.left+10,pill.top,W(pill)-20,H(pill),C_GREEN,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
     }
     RECT p = R(26, 82, 152, 42), m = R(184, 82, 136, 42);
     Round(dc, p, gPage == 0 ? C_ACCENT : C_PANEL, gPage == 0 ? C_ACCENT : C_LINE, 10);
@@ -615,11 +629,20 @@ static void DrawProcesses(HDC dc, int cw, int ch) {
     DrawButton(dc,R(cw-132,151,106,39),L"Refresh",ID_REFRESH);
     RECT table=R(tableX,tableY,tableW,ch-tableY-25);Card(dc,table);
     int nameX=tableX+56,pidX=tableX+tableW*56/100,cpuX=tableX+tableW*67/100,ramX=tableX+tableW*79/100,privateX=tableX+tableW*91/100;
-    Txt(dc,L"NAME",nameX,tableY+8,pidX-nameX-12,24,C_MUTED,gFontSmall);
-    Txt(dc,L"PID",pidX,tableY+8,cpuX-pidX-12,24,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-    Txt(dc,L"CPU",cpuX,tableY+8,ramX-cpuX-12,24,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-    Txt(dc,L"MEMORY",ramX,tableY+8,privateX-ramX-12,24,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-    Txt(dc,L"PRIVATE",privateX,tableY+8,table.right-privateX-20,24,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    auto sortLabel=[&](int col,const wchar_t* name){return std::wstring(name)+(gSortColumn==col?(gSortDescending?L"  ↓":L"  ↑"):L"");};
+    COLORREF nameColor=gSortColumn==0?C_ACCENT:C_MUTED,pidColor=gSortColumn==1?C_ACCENT:C_MUTED;
+    COLORREF cpuColor=gSortColumn==2?C_ACCENT:C_MUTED,memColor=gSortColumn==3?C_ACCENT:C_MUTED,privateColor=gSortColumn==4?C_ACCENT:C_MUTED;
+    Txt(dc,sortLabel(0,L"NAME"),nameX,tableY+8,pidX-nameX-12,24,nameColor,gFontSmall);
+    Txt(dc,sortLabel(1,L"PID"),pidX,tableY+8,cpuX-pidX-12,24,pidColor,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    Txt(dc,sortLabel(2,L"CPU"),cpuX,tableY+8,ramX-cpuX-12,24,cpuColor,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    Txt(dc,sortLabel(3,L"MEMORY"),ramX,tableY+8,privateX-ramX-12,24,memColor,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    Txt(dc,sortLabel(4,L"PRIVATE"),privateX,tableY+8,table.right-privateX-20,24,privateColor,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    int headerY=tableY+4;
+    AddHit(R(tableX+8,headerY,pidX-tableX-8,30),ID_SORT_NAME);
+    AddHit(R(pidX,headerY,cpuX-pidX-4,30),ID_SORT_PID);
+    AddHit(R(cpuX,headerY,ramX-cpuX-4,30),ID_SORT_CPU);
+    AddHit(R(ramX,headerY,privateX-ramX-4,30),ID_SORT_MEMORY);
+    AddHit(R(privateX,headerY,table.right-privateX-8,30),ID_SORT_PRIVATE);
     Line(dc,tableX+12,tableY+35,table.right-12,tableY+35,C_LINE);
     const int rowH=43,firstY=tableY+40;
     int rows=(std::max)(0,static_cast<int>(table.bottom-firstY-31)/rowH);
@@ -938,7 +961,13 @@ static void HandleClick(int x,int y,bool dbl) {
     if(gThresholdFocus&&(!target||target->id!=ID_THRESHOLD_FIELD))CommitThresholdEdit();
     if(!target){gSearchFocus=false;InvalidateRect(gWnd,nullptr,FALSE);return;}
     int id=target->id;
-    if(id==ID_PROCESSES){gPage=0;gSearchFocus=false;}
+    if(id>=ID_SORT_NAME&&id<=ID_SORT_PRIVATE){
+        int next=id-ID_SORT_NAME;
+        if(gSortColumn==next)gSortDescending=!gSortDescending;
+        else{gSortColumn=next;gSortDescending=next>=2;}
+        gScroll=0;RefreshProcesses();
+    }
+    else if(id==ID_PROCESSES){gPage=0;gSearchFocus=false;}
     else if(id==ID_MEMORY){gPage=1;gSearchFocus=false;}
     else if(id==ID_UPDATE)OpenLatestRelease();
     else if(id==ID_REFRESH){RefreshProcesses();UpdateMetrics();gStatus=L"Process list refreshed.";}
@@ -1056,10 +1085,13 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
             if(IsWindowVisible(h))InvalidateRect(h,nullptr,FALSE);
         } return 0;
     case WM_MOUSEMOVE:{
-        POINT pt{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};DWORD hover=0;
-        if(gPage==0)for(auto it=gHits.rbegin();it!=gHits.rend();++it)if(it->id==100&&Inside(it->r,pt.x,pt.y)){hover=it->data;break;}
+        POINT pt{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};DWORD hover=0;bool hand=false;
+        if(gPage==0)for(auto it=gHits.rbegin();it!=gHits.rend();++it){
+            if(it->id==100&&Inside(it->r,pt.x,pt.y)){hover=it->data;hand=true;break;}
+            if(it->id>=ID_SORT_NAME&&it->id<=ID_SORT_PRIVATE&&Inside(it->r,pt.x,pt.y)){hand=true;break;}
+        }
         if(hover!=gHoveredPid){gHoveredPid=hover;InvalidateRect(h,nullptr,FALSE);}
-        SetCursor(LoadCursorW(nullptr,hover?IDC_HAND:IDC_ARROW));return 0;
+        SetCursor(LoadCursorW(nullptr,hand?IDC_HAND:IDC_ARROW));return 0;
     }
     case WM_RBUTTONUP:{
         if(gPage==0){
