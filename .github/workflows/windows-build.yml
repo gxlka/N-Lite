@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -17,8 +17,18 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Select application version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          } else {
+            $version = '0.2.0'
+          }
+          "NLITE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Configure x64 release
-        run: cmake -S . -B build -A x64
+        run: cmake -S . -B build -A x64 "-DNLITE_VERSION=$env:NLITE_VERSION"
 
       - name: Build portable executable
         run: cmake --build build --config Release --parallel
@@ -36,3 +46,12 @@ jobs:
           path: dist/N-Lite.exe
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          generate_release_notes: true
+          files: dist/N-Lite.exe
