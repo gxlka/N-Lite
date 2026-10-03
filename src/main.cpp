@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <cwctype>
 #include <iterator>
+#include <utility>
 
 #pragma comment(lib, "psapi.lib")
 #pragma comment(lib, "shell32.lib")
@@ -45,11 +46,11 @@ static const wchar_t* POPUP_CLASS = L"NLiteContextPopup";
 static const UINT WM_UPDATE_READY = WM_APP + 12;
 static const UINT WM_TRAY = WM_APP + 11;
 static const UINT_PTR TIMER_REFRESH = 1, TIMER_UPDATE_CHECK = 2;
-static const int ID_PROCESSES = 1, ID_MEMORY = 2, ID_REFRESH = 10, ID_SEARCH = 11;
+static const int ID_PROCESSES = 1, ID_MEMORY = 2, ID_STARTUP = 3, ID_SETTINGS = 4, ID_REFRESH = 10, ID_SEARCH = 11;
 static const int ID_SORT_NAME = 20, ID_SORT_PID = 21, ID_SORT_CPU = 22, ID_SORT_MEMORY = 23, ID_SORT_PRIVATE = 24;
 static const int ID_PURGE = 30, ID_AUTO = 31, ID_THRESHOLD_DOWN = 32, ID_THRESHOLD_UP = 33, ID_THRESHOLD_FIELD = 37;
-static const int ID_INTERVAL_DOWN = 34, ID_INTERVAL_UP = 35, ID_ELEVATE = 36;
-static const int ID_TIMER_TOGGLE = 40, ID_TIMER_MINUS = 41, ID_TIMER_PLUS = 42, ID_AUTOSTART = 43;
+static const int ID_INTERVAL_FIELD = 34, ID_ELEVATE = 36, ID_INTERVAL_OPTION = 38;
+static const int ID_TIMER_TOGGLE = 40, ID_TIMER_MINUS = 41, ID_TIMER_PLUS = 42, ID_AUTOSTART = 43, ID_UPDATE_CHECK_NOW = 44, ID_OPEN_GITHUB = 45;
 static const int ID_END = 50, ID_AFFINITY = 51, ID_PRIORITY = 52, ID_GPU_HIGH = 53, ID_GPU_SAVE = 54;
 static const int ID_EXIT = 9001, ID_SHOW = 9002, ID_UPDATE = 9003;
 static const COLORREF C_BG = RGB(13, 17, 27), C_PANEL = RGB(21, 27, 40), C_PANEL2 = RGB(26, 33, 49);
@@ -67,7 +68,7 @@ struct ProcRow {
     DWORD pid = 0, ppid = 0;
     std::wstring name, path;
     double cpu = 0.0;
-    SIZE_T working = 0, privateBytes = 0;
+    SIZE_T working = 0, privateBytes = 0, treeWorking = 0, treePrivateBytes = 0;
     bool hasChildren = false;
 };
 struct Metrics {
@@ -87,17 +88,19 @@ static std::vector<ProcRow> gProcs, gVisible;
 static std::unordered_map<DWORD, uint64_t> gCpuPrevious;
 static std::unordered_map<DWORD, bool> gExpanded;
 static Metrics gMetrics;
-static int gPage = 0, gScroll = 0;
+static int gPage = 0, gScroll = 0, gNavHover = -1, gIntervalHover = -1;
+static bool gIntervalOpen = false;
 static int gSortColumn = 0;
 static bool gSortDescending = false;
 static DWORD gSelectedPid = 0;
 static std::wstring gSearch, gStatus = L"Ready";
 static bool gSearchFocus = false, gTrayAdded = false, gExiting = false, gAutoPurge = false, gAutoStart = false;
-static bool gThresholdFocus=false, gThresholdReplaceOnType=false, gTimerEnabled=false, gTimerActive=false, gAutoTaskReady=false;
+static bool gThresholdFocus=false, gThresholdReplaceOnType=false, gTimerEnabled=false, gTimerActive=false, gAutoTaskReady=false, gHasProcessOverrides=false;
 static std::wstring gThresholdEdit;
 static DWORD gHoveredPid=0;
 static std::unordered_map<std::wstring,HICON> gProcessIcons;
 static std::atomic<bool> gUpdateAvailable{false};
+static std::atomic<bool> gUpdateCheckSucceeded{false};
 static std::atomic<bool> gUpdateCheckInProgress{false};
 static std::wstring gLatestVersion, gLatestUrl;
 static bool gTimerNeed = false;
@@ -109,6 +112,13 @@ static bool gPurgeLatched = false;
 static std::wstring gExePath;
 static DWORD gPageSize = 4096;
 static HANDLE gMutex = nullptr;
+
+static bool ReadProcessDword(const wchar_t* kind, const std::wstring& path, DWORD& value);
+static bool ReadProcessQword(const wchar_t* kind, const std::wstring& path, uint64_t& value);
+static bool WriteProcessDword(const wchar_t* kind, const std::wstring& path, DWORD value);
+static bool WriteProcessQword(const wchar_t* kind, const std::wstring& path, uint64_t value);
+static void ApplyStoredProcessSettings(const ProcRow& p);
+static bool ProcessOverridesExist();
 
 using NtQuerySysFn = LONG (NTAPI*)(ULONG, PVOID, ULONG, PULONG);
 using NtSetSysFn = LONG (NTAPI*)(ULONG, PVOID, ULONG);
@@ -251,7 +261,8 @@ static void RefreshProcesses() {
                 }
                 CloseHandle(ph);
             }
-            if (gExpanded.find(p.pid) == gExpanded.end()) gExpanded[p.pid] = true;
+            if (gExpanded.find(p.pid) == gExpanded.end()) gExpanded[p.pid] = false;
+            if(!p.path.empty())ApplyStoredProcessSettings(p);
             fresh.push_back(std::move(p));
         } while (Process32NextW(snap, &e));
         CloseHandle(snap);
@@ -260,6 +271,8 @@ static void RefreshProcesses() {
     gProcs.swap(fresh);
 
     std::unordered_set<DWORD> ids; for (auto& p : gProcs) ids.insert(p.pid);
+    for(auto it=gExpanded.begin();it!=gExpanded.end();)if(!ids.count(it->first))it=gExpanded.erase(it);else ++it;
+    for(auto it=gCpuPrevious.begin();it!=gCpuPrevious.end();)if(!ids.count(it->first))it=gCpuPrevious.erase(it);else ++it;
     std::unordered_map<DWORD, std::vector<DWORD>> children;
     std::unordered_map<DWORD, size_t> index;
     for (size_t i = 0; i < gProcs.size(); ++i) index[gProcs[i].pid] = i;
@@ -267,13 +280,28 @@ static void RefreshProcesses() {
         children[p.ppid].push_back(p.pid);
         gProcs[index[p.ppid]].hasChildren = true;
     }
+    std::unordered_map<DWORD,std::pair<SIZE_T,SIZE_T>> totals;
+    std::unordered_set<DWORD> calculating;
+    std::function<std::pair<SIZE_T,SIZE_T>(DWORD)> totalFor = [&](DWORD id) -> std::pair<SIZE_T,SIZE_T> {
+        auto memo=totals.find(id);if(memo!=totals.end())return memo->second;
+        auto ix=index.find(id);if(ix==index.end())return {0,0};
+        ProcRow& row=gProcs[ix->second];
+        if(calculating.count(id))return {0,0};
+        calculating.insert(id);
+        SIZE_T working=row.working,privateBytes=row.privateBytes;
+        auto kid=children.find(id);
+        if(kid!=children.end())for(DWORD child:kid->second){auto part=totalFor(child);working+=part.first;privateBytes+=part.second;}
+        calculating.erase(id);
+        return totals[id]={working,privateBytes};
+    };
+    for(auto& p:gProcs){auto total=totalFor(p.pid);p.treeWorking=total.first;p.treePrivateBytes=total.second;}
     auto compareRows = [&](const ProcRow& a,const ProcRow& b) {
         int cmp=0;
         if(gSortColumn==0)cmp=_wcsicmp(a.name.c_str(),b.name.c_str());
         else if(gSortColumn==1)cmp=a.pid<b.pid?-1:(a.pid>b.pid?1:0);
         else if(gSortColumn==2)cmp=a.cpu<b.cpu?-1:(a.cpu>b.cpu?1:0);
-        else if(gSortColumn==3)cmp=a.working<b.working?-1:(a.working>b.working?1:0);
-        else cmp=a.privateBytes<b.privateBytes?-1:(a.privateBytes>b.privateBytes?1:0);
+        else if(gSortColumn==3){SIZE_T av=a.hasChildren&&!gExpanded[a.pid]?a.treeWorking:a.working,bv=b.hasChildren&&!gExpanded[b.pid]?b.treeWorking:b.working;cmp=av<bv?-1:(av>bv?1:0);}
+        else {SIZE_T av=a.hasChildren&&!gExpanded[a.pid]?a.treePrivateBytes:a.privateBytes,bv=b.hasChildren&&!gExpanded[b.pid]?b.treePrivateBytes:b.privateBytes;cmp=av<bv?-1:(av>bv?1:0);}
         if(cmp==0)cmp=_wcsicmp(a.name.c_str(),b.name.c_str());
         return gSortDescending?cmp>0:cmp<0;
     };
@@ -378,6 +406,55 @@ static bool SetGpuPreference(const std::wstring& path, bool high) {
     std::wstring val = high ? L"GpuPreference=2;" : L"GpuPreference=1;";
     LONG r = RegSetValueExW(k, path.c_str(), 0, REG_SZ, reinterpret_cast<const BYTE*>(val.c_str()), static_cast<DWORD>((val.size() + 1) * sizeof(wchar_t)));
     RegCloseKey(k); return r == ERROR_SUCCESS;
+}
+static std::wstring ProcessSettingName(const wchar_t* kind,const std::wstring& path) {
+    return std::wstring(kind)+L":"+path;
+}
+static bool ReadProcessDword(const wchar_t* kind,const std::wstring& path,DWORD& value) {
+    if(path.empty()||path==L"Path unavailable")return false;
+    HKEY k;if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\N-Lite\\ProcessSettings",0,KEY_QUERY_VALUE,&k)!=ERROR_SUCCESS)return false;
+    DWORD type=0,cb=sizeof(value);LONG r=RegQueryValueExW(k,ProcessSettingName(kind,path).c_str(),nullptr,&type,reinterpret_cast<BYTE*>(&value),&cb);
+    RegCloseKey(k);return r==ERROR_SUCCESS&&type==REG_DWORD&&cb==sizeof(value);
+}
+static bool ReadProcessQword(const wchar_t* kind,const std::wstring& path,uint64_t& value) {
+    if(path.empty()||path==L"Path unavailable")return false;
+    HKEY k;if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\N-Lite\\ProcessSettings",0,KEY_QUERY_VALUE,&k)!=ERROR_SUCCESS)return false;
+    DWORD type=0,cb=sizeof(value);LONG r=RegQueryValueExW(k,ProcessSettingName(kind,path).c_str(),nullptr,&type,reinterpret_cast<BYTE*>(&value),&cb);
+    RegCloseKey(k);return r==ERROR_SUCCESS&&type==REG_QWORD&&cb==sizeof(value);
+}
+static bool WriteProcessDword(const wchar_t* kind,const std::wstring& path,DWORD value) {
+    if(path.empty()||path==L"Path unavailable")return false;
+    HKEY k;if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\N-Lite\\ProcessSettings",0,nullptr,0,KEY_SET_VALUE,nullptr,&k,nullptr)!=ERROR_SUCCESS)return false;
+    std::wstring name=ProcessSettingName(kind,path);LONG r=RegSetValueExW(k,name.c_str(),0,REG_DWORD,reinterpret_cast<const BYTE*>(&value),sizeof(value));
+    RegCloseKey(k);if(r==ERROR_SUCCESS)gHasProcessOverrides=true;return r==ERROR_SUCCESS;
+}
+static bool WriteProcessQword(const wchar_t* kind,const std::wstring& path,uint64_t value) {
+    if(path.empty()||path==L"Path unavailable")return false;
+    HKEY k;if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\N-Lite\\ProcessSettings",0,nullptr,0,KEY_SET_VALUE,nullptr,&k,nullptr)!=ERROR_SUCCESS)return false;
+    std::wstring name=ProcessSettingName(kind,path);LONG r=RegSetValueExW(k,name.c_str(),0,REG_QWORD,reinterpret_cast<const BYTE*>(&value),sizeof(value));
+    RegCloseKey(k);if(r==ERROR_SUCCESS)gHasProcessOverrides=true;return r==ERROR_SUCCESS;
+}
+static bool ProcessOverridesExist() {
+    HKEY k;if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\N-Lite\\ProcessSettings",0,KEY_QUERY_VALUE,&k)!=ERROR_SUCCESS)return false;
+    DWORD count=0;RegQueryInfoKeyW(k,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,&count,nullptr,nullptr,nullptr,nullptr);RegCloseKey(k);
+    return count>0;
+}
+static void ApplyStoredProcessSettings(const ProcRow& p) {
+    DWORD priority=0;uint64_t affinity=0;
+    const bool hasPriority=ReadProcessDword(L"Priority",p.path,priority);
+    const bool hasAffinity=ReadProcessQword(L"Affinity",p.path,affinity);
+    if(!hasPriority&&!hasAffinity)return;
+    HANDLE h=OpenProcess(PROCESS_SET_INFORMATION|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,p.pid);if(!h)return;
+    if(hasPriority&&(priority==IDLE_PRIORITY_CLASS||priority==BELOW_NORMAL_PRIORITY_CLASS||priority==NORMAL_PRIORITY_CLASS||priority==ABOVE_NORMAL_PRIORITY_CLASS||priority==HIGH_PRIORITY_CLASS))
+        SetPriorityClass(h,priority);
+    if(hasAffinity){
+        DWORD_PTR current=0,system=0;
+        if(GetProcessAffinityMask(h,&current,&system)){
+            DWORD_PTR desired=static_cast<DWORD_PTR>(affinity)&system;
+            if(desired)SetProcessAffinityMask(h,desired);
+        }
+    }
+    CloseHandle(h);
 }
 static void SetTimerRequest(bool on) {
     if(on && !gTimerActive){
@@ -581,8 +658,10 @@ static void CheckForUpdatesAsync() {
             }
             WinHttpCloseHandle(session);
         }
-        if(!latest.empty()&&!url.empty()&&VersionNewer(latest,APP_VERSION)){
-            gLatestVersion=latest;gLatestUrl=url;gUpdateAvailable.store(true,std::memory_order_release);
+        if(!latest.empty()&&!url.empty()){
+            gUpdateCheckSucceeded.store(true,std::memory_order_release);
+            if(VersionNewer(latest,APP_VERSION)){gLatestVersion=latest;gLatestUrl=url;gUpdateAvailable.store(true,std::memory_order_release);}
+            else gUpdateAvailable.store(false,std::memory_order_release);
         }
         gUpdateCheckInProgress.store(false,std::memory_order_release);
         if(gWnd)PostMessageW(gWnd,WM_UPDATE_READY,0,0);
@@ -597,21 +676,44 @@ static void DrawButton(HDC dc, RECT r, const std::wstring& s, int id, COLORREF b
     Txt(dc, s, r.left + 8, r.top, W(r) - 16, H(r), fg, gFontMed, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     AddHit(r, id);
 }
-static void DrawHeader(HDC dc, int width) {
-    Txt(dc, L"N-Lite", 28, 16, 180, 39, C_TEXT, gFontTitle);
-    Txt(dc, L"Lightweight system tools", 30, 52, 260, 20, C_MUTED, gFontSmall);
+static RECT MainContent(int width) {
+    int available=width-188;
+    int contentWidth=(std::max)(360,(std::min)(1040,available-112));
+    int left=188+(available-contentWidth)/2;
+    return R(left,0,contentWidth,0);
+}
+static void DrawPageTitle(HDC dc,RECT content,const wchar_t* title,const wchar_t* subtitle) {
+    Txt(dc,title,content.left,69,W(content),34,C_TEXT,gFontTitle);
+    Txt(dc,subtitle,content.left,106,W(content),22,C_MUTED,gFont);
+}
+static void DrawHeader(HDC dc, int width,int height) {
+    RECT sidebar=R(0,0,188,height);Fill(dc,sidebar,RGB(15,19,29));
+    Line(dc,187,0,187,height,C_LINE);
+    Txt(dc,L"N Lite",20,15,145,30,C_TEXT,gFontMed);
+    Txt(dc,L"SYSTEM",20,63,140,18,C_MUTED,gFontSmall);
+    auto nav=[&](int y,int id,const wchar_t* glyph,const wchar_t* label,int page){
+        RECT r=R(12,y,164,36);bool active=gPage==page,hover=gNavHover==id;
+        if(active)Round(dc,r,RGB(242,243,247),RGB(242,243,247),8);
+        else if(hover)Round(dc,r,RGB(31,38,53),RGB(31,38,53),8);
+        COLORREF fg=active?RGB(20,23,31):(hover?C_TEXT:C_MUTED);
+        Txt(dc,glyph,r.left+12,r.top,22,H(r),active?C_ACCENT:fg,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        Txt(dc,label,r.left+43,r.top,W(r)-51,H(r),fg,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+        AddHit(r,id);
+    };
+    nav(84,ID_MEMORY,L"◉",L"Memory",0);
+    nav(126,ID_PROCESSES,L"▦",L"Processes",1);
+    Line(dc,15,177,173,177,C_LINE);
+    Txt(dc,L"APP",20,191,140,18,C_MUTED,gFontSmall);
+    nav(211,ID_STARTUP,L"↗",L"Startup",2);
+    nav(253,ID_SETTINGS,L"⚙",L"Settings",3);
+    RECT top=R(188,0,width-188,48);Fill(dc,top,RGB(17,21,31));
+    Line(dc,188,47,width,47,C_LINE);
+    Txt(dc,L"N Lite",210,0,180,48,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
     if(gUpdateAvailable.load(std::memory_order_acquire)){
-        RECT pill=R(width-248,25,220,30);Round(dc,pill,RGB(62,50,31),RGB(134,101,51),15);
+        RECT pill=R(width-244,10,222,28);Round(dc,pill,RGB(58,49,31),RGB(117,91,48),14);
         Txt(dc,L"↑  Update "+gLatestVersion+L" available",pill.left+8,pill.top,W(pill)-16,H(pill),C_AMBER,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
         AddHit(pill,ID_UPDATE);
     }
-    RECT p = R(26, 82, 152, 42), m = R(184, 82, 136, 42);
-    Round(dc, p, gPage == 0 ? C_ACCENT : C_PANEL, gPage == 0 ? C_ACCENT : C_LINE, 10);
-    Txt(dc, L"Processes", p.left+6, p.top, W(p)-12, H(p), gPage==0 ? RGB(255,255,255) : C_MUTED, gFontMed, DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-    Round(dc, m, gPage == 1 ? C_ACCENT : C_PANEL, gPage == 1 ? C_ACCENT : C_LINE, 10);
-    Txt(dc, L"Memory", m.left+6, m.top, W(m)-12, H(m), gPage==1 ? RGB(255,255,255) : C_MUTED, gFontMed, DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-    AddHit(p, ID_PROCESSES); AddHit(m, ID_MEMORY);
-    Line(dc, 26, 137, width - 26, 137, C_LINE);
 }
 static HICON GetProcessIcon(const ProcRow& p) {
     if(p.path.empty()||p.path==L"Path unavailable")return nullptr;
@@ -621,12 +723,13 @@ static HICON GetProcessIcon(const ProcRow& p) {
     gProcessIcons.emplace(p.path,icon);return icon;
 }
 static void DrawProcesses(HDC dc, int cw, int ch) {
-    int tableX=26, tableY=202, tableW=cw-52;
-    RECT search=R(26,151,cw-172,39);
+    RECT content=MainContent(cw);int tableX=content.left,tableW=W(content),tableY=193;
+    DrawPageTitle(dc,content,L"Processes",L"View running apps and processes, then adjust how they use your system.");
+    RECT search=R(content.left,142,W(content)-126,38);
     Round(dc,search,C_PANEL,gSearchFocus?C_ACCENT:C_LINE,9);
     Txt(dc,gSearch.empty()?L"Search processes by name or path":L"Search  ·  "+gSearch,search.left+14,search.top, W(search)-28,H(search),gSearch.empty()?C_MUTED:C_TEXT,gFont);
     AddHit(search,ID_SEARCH);
-    DrawButton(dc,R(cw-132,151,106,39),L"Refresh",ID_REFRESH);
+    DrawButton(dc,R(content.right-108,142,108,38),L"Refresh",ID_REFRESH);
     RECT table=R(tableX,tableY,tableW,ch-tableY-25);Card(dc,table);
     int nameX=tableX+56,pidX=tableX+tableW*56/100,cpuX=tableX+tableW*67/100,ramX=tableX+tableW*79/100,privateX=tableX+tableW*91/100;
     auto sortLabel=[&](int col,const wchar_t* name){return std::wstring(name)+(gSortColumn==col?(gSortDescending?L"  ↓":L"  ↑"):L"");};
@@ -662,6 +765,7 @@ static void DrawProcesses(HDC dc, int cw, int ch) {
             if(gExpanded[p.pid]){tri[0]={base,ty};tri[1]={base+9,ty};tri[2]={base+4,ty+6};}
             else{tri[0]={base,ty};tri[1]={base,ty+9};tri[2]={base+6,ty+4};}
             HBRUSH b=CreateSolidBrush(selected?C_ACCENT:C_MUTED);HGDIOBJ old=SelectObject(dc,b);Polygon(dc,tri,3);SelectObject(dc,old);DeleteObject(b);
+            AddHit(R(base-4,y+5,21,rowH-12),101,p.pid);
         }
         int ix=base+13;HICON icon=GetProcessIcon(p);
         if(icon)DrawIconEx(dc,ix,y+12,icon,18,18,0,nullptr,DI_NORMAL);
@@ -669,8 +773,10 @@ static void DrawProcesses(HDC dc, int cw, int ch) {
         Txt(dc,p.name,ix+24,y,pidX-(ix+29),rowH-2,selected?C_TEXT:RGB(203,212,228),gFont);
         Txt(dc,std::to_wstring(p.pid),pidX,y,cpuX-pidX-12,rowH-2,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
         Txt(dc,Percent(p.cpu),cpuX,y,ramX-cpuX-12,rowH-2,C_TEXT,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-        Txt(dc,Bytes(p.working),ramX,y,privateX-ramX-12,rowH-2,C_TEXT,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-        Txt(dc,Bytes(p.privateBytes),privateX,y,table.right-privateX-20,rowH-2,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+        SIZE_T shownWorking=p.hasChildren&&!gExpanded[p.pid]?p.treeWorking:p.working;
+        SIZE_T shownPrivate=p.hasChildren&&!gExpanded[p.pid]?p.treePrivateBytes:p.privateBytes;
+        Txt(dc,Bytes(shownWorking),ramX,y,privateX-ramX-12,rowH-2,C_TEXT,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+        Txt(dc,Bytes(shownPrivate),privateX,y,table.right-privateX-20,rowH-2,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
     }
     if(gVisible.empty())Txt(dc,L"No processes match that search.",tableX+22,firstY+20,tableW-44,36,C_MUTED,gFont);
     if(maxScroll>0){
@@ -681,104 +787,141 @@ static void DrawProcesses(HDC dc, int cw, int ch) {
     }
     Line(dc,tableX+14,table.bottom-28,table.right-14,table.bottom-28,C_LINE);
     Txt(dc,std::to_wstring(gVisible.size())+L" processes",tableX+18,table.bottom-25,150,19,C_MUTED,gFontSmall);
-    Txt(dc,L"Right-click a row for actions  ·  Double-click to expand or collapse",tableX+170,table.bottom-25,tableW-190,19,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    Txt(dc,L"Right-click for actions  ·  Expand groups with the chevron or double-click",tableX+170,table.bottom-25,tableW-190,19,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+}
+static void DrawSwitch(HDC dc,RECT r,bool enabled,int id) {
+    Round(dc,r,enabled?C_ACCENT:RGB(49,56,71),enabled?C_ACCENT:C_LINE,H(r)/2);
+    int d=H(r)-6,x=enabled?r.right-d-3:r.left+3;
+    Round(dc,R(x,r.top+3,d,d),RGB(250,251,255),RGB(250,251,255),d/2);
+    AddHit(r,id);
+}
+static std::wstring IntervalLabel(unsigned seconds) {
+    if(seconds<60)return std::to_wstring(seconds)+L" seconds";
+    unsigned minutes=seconds/60;
+    return std::to_wstring(minutes)+(minutes==1?L" minute":L" minutes");
 }
 static void DrawMetricCard(HDC dc, RECT r, const wchar_t* label, const std::wstring& value, const std::wstring& sub, COLORREF accent) {
-    Card(dc,r); Round(dc,R(r.left+17,r.top+17,5,30),accent,accent,5);
-    Txt(dc,label,r.left+32,r.top+13,W(r)-50,20,C_MUTED,gFontSmall);
-    Txt(dc,value,r.left+32,r.top+38,W(r)-50,35,C_TEXT,gFontTitle);
-    Txt(dc,sub,r.left+32,r.top+80,W(r)-50,19,C_MUTED,gFontSmall);
+    Card(dc,r);
+    Round(dc,R(r.left+15,r.top+16,5,5),accent,accent,3);
+    Txt(dc,label,r.left+28,r.top+11,W(r)-42,18,C_MUTED,gFontSmall);
+    Txt(dc,value,r.left+16,r.top+31,W(r)-30,27,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+    Txt(dc,sub,r.left+16,r.top+57,W(r)-30,15,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
 }
 static void DrawMemory(HDC dc, int cw, int ch) {
-    int gap=13,margin=26,cardW=(cw-2*margin-2*gap)/3;
-    RECT a=R(margin,151,cardW,108),b=R(margin+cardW+gap,151,cardW,108),c=R(margin+2*(cardW+gap),151,cardW,108);
+    RECT content=MainContent(cw);DrawPageTitle(dc,content,L"Memory",L"Standby cleanup and system timer controls.");
+    int gap=10,cardY=151,cardH=76,cardW=(W(content)-gap*3)/4;
     double used=(std::max)(0.0,gMetrics.total-gMetrics.available);
-    DrawMetricCard(dc,a,L"RAM IN USE",Bytes(used),Percent(gMetrics.total?100*used/gMetrics.total:0),C_ACCENT);
-    DrawMetricCard(dc,b,L"AVAILABLE MEMORY",Bytes(gMetrics.available),L"Immediately reusable by Windows",C_GREEN);
-    DrawMetricCard(dc,c,L"STANDBY LIST",Bytes(gMetrics.standby),L"Cached and reclaimable RAM",C_AMBER);
+    DrawMetricCard(dc,R(content.left,cardY,cardW,cardH),L"IN USE",Bytes(used),Percent(gMetrics.total?100*used/gMetrics.total:0),C_ACCENT);
+    DrawMetricCard(dc,R(content.left+cardW+gap,cardY,cardW,cardH),L"AVAILABLE",Bytes(gMetrics.available),L"Free "+Bytes(gMetrics.free),C_GREEN);
+    DrawMetricCard(dc,R(content.left+2*(cardW+gap),cardY,cardW,cardH),L"STANDBY",Bytes(gMetrics.standby),L"Cached and reclaimable RAM",C_AMBER);
+    std::wstring pagefileValue=Bytes(gMetrics.pagefileUsed)+L" / "+Bytes(gMetrics.pagefileTotal);
+    std::wstring commitSub=L"Commit "+Bytes(gMetrics.commit)+L" / "+Bytes(gMetrics.commitLimit);
+    DrawMetricCard(dc,R(content.left+3*(cardW+gap),cardY,cardW,cardH),L"PAGE FILE",pagefileValue,commitSub,C_ACCENT);
 
-    int lowerY=274,lowerH=310,leftW=(cw-2*margin-gap)/2;
-    RECT ram=R(margin,lowerY,leftW,lowerH),clean=R(margin+leftW+gap,lowerY,leftW,lowerH);
-    Card(dc,ram);Txt(dc,L"Memory overview",ram.left+18,ram.top+15,leftW-36,26,C_TEXT,gFontMed);
-    Txt(dc,L"Physical memory and system commit",ram.left+18,ram.top+44,leftW-36,18,C_MUTED,gFontSmall);
-    int barX=ram.left+18,barY=ram.top+72,barW=leftW-36;
-    Fill(dc,R(barX,barY,barW,13),RGB(37,44,61));
-    if(gMetrics.total>0){
-        int wu=static_cast<int>(barW*(std::min)(1.0,used/gMetrics.total));
-        int ws=static_cast<int>(barW*(std::min)(1.0,gMetrics.standby/gMetrics.total));
-        int wf=(std::max)(0,barW-wu-ws);
-        Fill(dc,R(barX,barY,wu,13),C_ACCENT);Fill(dc,R(barX+wu,barY,ws,13),C_AMBER);Fill(dc,R(barX+wu+ws,barY,wf,13),C_GREEN);
-    }
-    int rowY=ram.top+96;
-    auto stat=[&](const wchar_t* label,const std::wstring& value,COLORREF dot){
-        Round(dc,R(ram.left+19,rowY+7,7,7),dot,dot,5);
-        Txt(dc,label,ram.left+34,rowY,leftW/2-28,26,C_MUTED,gFontSmall);
-        Txt(dc,value,ram.left+leftW/2,rowY,leftW/2-20,26,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-        rowY+=30;
-    };
-    stat(L"In use",Bytes(used),C_ACCENT);
-    stat(L"Standby",Bytes(gMetrics.standby),C_AMBER);
-    stat(L"Free pages",Bytes(gMetrics.free),C_GREEN);
-    stat(L"Available",Bytes(gMetrics.available),C_GREEN);
-    Line(dc,ram.left+18,rowY,ram.right-18,rowY,C_LINE);rowY+=3;
-    stat(L"Commit charge",Bytes(gMetrics.commit),C_ACCENT);
-    Txt(dc,L"Page file used  "+Bytes(gMetrics.pagefileUsed)+L" / "+Bytes(gMetrics.pagefileTotal),ram.left+19,ram.bottom-22,leftW-38,16,C_MUTED,gFontSmall);
+    RECT clean=R(content.left,241,W(content),170);Card(dc,clean);
+    Txt(dc,L"Standby cleaner",clean.left+18,clean.top+14,W(clean)-110,25,C_TEXT,gFontMed);
+    Txt(dc,L"Clear cached standby pages automatically when memory reaches your threshold.",clean.left+18,clean.top+42,W(clean)-120,20,C_MUTED,gFontSmall);
+    DrawSwitch(dc,R(clean.right-68,clean.top+20,48,27),gAutoPurge,ID_AUTO);
 
-    Card(dc,clean);Txt(dc,L"Standby list cleaner",clean.left+18,clean.top+15,leftW-36,26,C_TEXT,gFontMed);
-    Txt(dc,L"Clean standby memory automatically when it reaches your limit.",clean.left+18,clean.top+44,leftW-36,34,C_MUTED,gFontSmall,DT_LEFT|DT_TOP|DT_WORDBREAK);
-    int cy=clean.top+83,buttonW=(leftW-52)/2;
-    DrawButton(dc,R(clean.left+18,cy,buttonW,34),gAutoPurge?L"Auto clean: ON":L"Auto clean: OFF",ID_AUTO,
-        gAutoPurge?RGB(31,68,58):C_PANEL2,gAutoPurge?C_GREEN:C_MUTED,gAutoPurge);
-    std::wstring taskLabel=gAutoPurge?(gAutoTaskReady?L"Elevated task active":L"Admin setup pending"):L"Checks once a minute";
-    Txt(dc,taskLabel,clean.left+28+buttonW,cy,leftW-buttonW-48,34,gAutoPurge&&gAutoTaskReady?C_GREEN:C_MUTED,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-    cy+=45;
-    Txt(dc,L"Threshold",clean.left+19,cy,78,34,C_MUTED,gFontSmall);
-    RECT field=R(clean.left+96,cy,leftW-116,34);
-    Round(dc,field,RGB(16,21,32),gThresholdFocus?C_ACCENT:C_LINE,8);
-    std::wstring thresholdText=gThresholdFocus?gThresholdEdit:(Commas(gThresholdMB)+L" MB");
-    Txt(dc,thresholdText,field.left+12,field.top, W(field)-24,H(field),C_TEXT,gFontMed);
-    if(gThresholdFocus){int cx=field.left+12+static_cast<int>(thresholdText.size())*9;Line(dc,cx,field.top+8,cx,field.bottom-8,C_ACCENT,2);}
+    int inside=W(clean)-36,thresholdW=inside*36/100,intervalW=inside*37/100;
+    int x1=clean.left+18,x2=x1+thresholdW+14,x3=x2+intervalW+14;
+    int actionW=clean.right-18-x3;
+    int labelY=clean.top+72,fieldY=clean.top+93,fieldH=36;
+    Txt(dc,L"Threshold",x1,labelY,thresholdW,17,C_MUTED,gFontSmall);
+    Txt(dc,L"Check interval",x2,labelY,intervalW,17,C_MUTED,gFontSmall);
+    Txt(dc,L"Action",x3,labelY,actionW,17,C_MUTED,gFontSmall);
+
+    RECT field=R(x1,fieldY,thresholdW,fieldH);
+    Round(dc,field,RGB(16,20,29),gThresholdFocus?C_ACCENT:C_LINE,8);
+    Txt(dc,gThresholdFocus?gThresholdEdit:std::to_wstring(gThresholdMB),field.left+12,field.top,W(field)-55,H(field),C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    Line(dc,field.right-43,field.top+6,field.right-43,field.bottom-6,C_LINE);
+    Txt(dc,L"MB",field.right-41,field.top,38,H(field),C_MUTED,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    if(gThresholdFocus){int cx=field.left+12+static_cast<int>((gThresholdFocus?gThresholdEdit:std::to_wstring(gThresholdMB)).size())*9;Line(dc,cx,field.top+9,cx,field.bottom-9,C_ACCENT,2);}
     AddHit(field,ID_THRESHOLD_FIELD);
-    Txt(dc,L"Enter MB and press Enter",clean.left+99,cy+35,leftW-120,16,C_MUTED,gFontSmall);
-    cy+=61;
-    Txt(dc,L"Check interval",clean.left+19,cy,112,30,C_MUTED,gFontSmall);
-    DrawButton(dc,R(clean.left+132,cy,31,30),L"−",ID_INTERVAL_DOWN,C_PANEL2,C_TEXT);
-    Txt(dc,std::to_wstring(gIntervalSec/60)+L" min",clean.left+166,cy,leftW-246,30,C_TEXT,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-    DrawButton(dc,R(clean.right-70,cy,31,30),L"+",ID_INTERVAL_UP,C_PANEL2,C_TEXT);
-    cy+=43;
-    DrawButton(dc,R(clean.left+18,cy,buttonW,36),L"Purge now",ID_PURGE,C_ACCENT,RGB(255,255,255),true);
-    if(!IsAdmin())DrawButton(dc,R(clean.left+30+buttonW,cy,buttonW,36),L"Elevate once",ID_ELEVATE,C_PANEL2,C_AMBER);
-    else Txt(dc,L"Admin access available",clean.left+30+buttonW,cy,buttonW,36,C_GREEN,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-    Txt(dc,gStatus,clean.left+18,clean.bottom-20,leftW-36,15,C_MUTED,gFontSmall);
 
-    RECT timer=R(margin,598,cw-2*margin,166);Card(dc,timer);
-    Txt(dc,L"Timer resolution",timer.left+18,timer.top+13,220,24,C_TEXT,gFontMed);
-    Txt(dc,L"Saved between launches. Lower values can increase power use.",timer.left+18,timer.top+39,W(timer)-36,18,C_MUTED,gFontSmall);
-    int sy=timer.top+91,sx=timer.left+22,sw=(std::min)(W(timer)-450,500);
-    Txt(dc,TimerText(gTimerMinResolution),sx,sy-25,72,18,C_MUTED,gFontSmall);
-    Txt(dc,TimerText(gTimerMaxResolution),sx+sw-72,sy-25,72,18,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-    Fill(dc,R(sx,sy,sw,5),RGB(52,60,78));
+    RECT interval=R(x2,fieldY,intervalW,fieldH);
+    Round(dc,interval,RGB(16,20,29),gIntervalOpen?C_ACCENT:C_LINE,8);
+    Txt(dc,IntervalLabel(gIntervalSec),interval.left+13,interval.top,W(interval)-46,H(interval),C_TEXT,gFont,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    Txt(dc,gIntervalOpen?L"⌃":L"⌄",interval.right-32,interval.top,24,H(interval),C_MUTED,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    AddHit(interval,ID_INTERVAL_FIELD);
+
+    RECT purge=R(x3,fieldY,actionW,fieldH);
+    DrawButton(dc,purge,L"Clean now",ID_PURGE,C_ACCENT,RGB(255,255,255),true);
+    Txt(dc,gStatus,clean.left+18,clean.bottom-22,W(clean)-36,15,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+
+    RECT timer=R(content.left,425,W(content),90);Card(dc,timer);
+    Txt(dc,L"Timer resolution",timer.left+18,timer.top+11,260,24,C_TEXT,gFontMed);
+    Txt(dc,L"Keep the selected system timing precision active while N-Lite runs.",timer.left+18,timer.top+37,W(timer)-240,19,C_MUTED,gFontSmall);
+    int sx=timer.left+18,sy=timer.top+69,sw=(std::max)(170,W(timer)-310);
+    Fill(dc,R(sx,sy-2,sw,4),RGB(57,64,81));
     double span=static_cast<double>(gTimerMaxResolution-gTimerMinResolution);
-    int knobX=sx+static_cast<int>((gTimerResolution-gTimerMinResolution)/(span?span:1)*sw);
-    Round(dc,R(knobX-8,sy-7,16,19),gTimerEnabled?C_ACCENT:C_MUTED,gTimerEnabled?C_ACCENT:C_MUTED,9);
-    AddHit(R(sx,sy-15,sw,34),ID_TIMER_PLUS);
-    Txt(dc,TimerText(gTimerResolution),sx+sw+14,sy-11,94,22,C_TEXT,gFontMed);
-    RECT toggle=R(sx+sw+116,sy-18,112,36);
-    DrawButton(dc,toggle,gTimerEnabled?L"Enabled":L"Disabled",ID_TIMER_TOGGLE,gTimerEnabled?RGB(31,68,58):C_PANEL2,gTimerEnabled?C_GREEN:C_MUTED,gTimerEnabled);
-    DrawButton(dc,R(timer.right-188,timer.top+15,169,32),gAutoStart?L"Startup: enabled":L"Start with Windows",ID_AUTOSTART,gAutoStart?RGB(31,68,58):C_PANEL2,gAutoStart?C_GREEN:C_TEXT,gAutoStart);
-    ULONG maxR=0,minR=0,curR=0;std::wstring current=L"unavailable";
-    if(gNtQueryTimer&&IsNtOk(gNtQueryTimer(&maxR,&minR,&curR)))current=TimerText(curR);
-    Txt(dc,L"Current system timer: "+current+(gTimerEnabled&&!gTimerActive?L"  ·  request failed":L""),timer.left+18,timer.bottom-22,W(timer)-36,15,gTimerNeed?C_AMBER:C_MUTED,gFontSmall);
+    double ratio=span?static_cast<double>(gTimerResolution-gTimerMinResolution)/span:0.0;
+    int knobX=sx+static_cast<int>(ratio*sw);
+    Fill(dc,R(sx,sy-2,(std::max)(0,knobX-sx),4),C_ACCENT);
+    Round(dc,R(knobX-7,sy-8,14,16),gTimerEnabled?C_ACCENT:C_MUTED,gTimerEnabled?C_ACCENT:C_MUTED,8);
+    AddHit(R(sx,sy-15,sw,31),ID_TIMER_PLUS);
+    RECT value=R(timer.right-159,timer.top+20,86,34);
+    Round(dc,value,RGB(16,20,29),C_LINE,8);
+    Txt(dc,TimerText(gTimerResolution),value.left+5,value.top,W(value)-10,H(value),C_TEXT,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    DrawSwitch(dc,R(timer.right-61,timer.top+24,44,26),gTimerEnabled,ID_TIMER_TOGGLE);
+
+    if(gIntervalOpen){
+        static const unsigned choices[]={60,120,300,600,900,1800,3600,7200};
+        int optionH=29,popupX=interval.left,popupY=interval.bottom+5;
+        RECT pop=R(popupX,popupY,intervalW,(sizeof(choices)/sizeof(choices[0]))*optionH+10);
+        Round(dc,pop,RGB(22,27,39),C_LINE,10);
+        for(int i=0;i<static_cast<int>(sizeof(choices)/sizeof(choices[0]));++i){
+            RECT option=R(pop.left+5,pop.top+5+i*optionH,W(pop)-10,optionH);
+            bool active=choices[i]==gIntervalSec;
+            if(gIntervalHover==i||active)Round(dc,option,gIntervalHover==i?RGB(41,49,68):RGB(33,41,59),gIntervalHover==i?RGB(41,49,68):RGB(33,41,59),6);
+            Txt(dc,IntervalLabel(choices[i]),option.left+10,option.top,W(option)-38,H(option),C_TEXT,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+            if(active)Txt(dc,L"✓",option.right-27,option.top,19,H(option),C_GREEN,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+            AddHit(option,ID_INTERVAL_OPTION,choices[i]);
+        }
+    }
     (void)ch;
 }
+static void DrawProcesses(HDC dc, int cw, int ch);
+static void DrawStartup(HDC dc,int cw) {
+    RECT content=MainContent(cw);DrawPageTitle(dc,content,L"Startup",L"Choose whether N-Lite starts with Windows.");
+    RECT card=R(content.left,151,W(content),116);Card(dc,card);
+    Txt(dc,L"Start N-Lite when I sign in",card.left+20,card.top+20,W(card)-115,25,C_TEXT,gFontMed);
+    Txt(dc,L"Launch quietly in the notification area and keep your saved memory and timer settings active.",card.left+20,card.top+51,W(card)-125,36,C_MUTED,gFontSmall,DT_LEFT|DT_TOP|DT_WORDBREAK);
+    DrawSwitch(dc,R(card.right-71,card.top+25,48,27),gAutoStart,ID_AUTOSTART);
+    RECT note=R(content.left,282,W(content),70);
+    Txt(dc,gAutoStart?L"N-Lite is set to start for your Windows account.":L"N-Lite will only start when you open it.",note.left+4,note.top,W(note),24,gAutoStart?C_GREEN:C_MUTED,gFont);
+}
+static void DrawSettings(HDC dc,int cw) {
+    RECT content=MainContent(cw);DrawPageTitle(dc,content,L"Settings",L"Application information and update preferences.");
+    RECT card=R(content.left,151,W(content),158);Card(dc,card);
+    Txt(dc,L"About N-Lite",card.left+20,card.top+18,W(card)-40,26,C_TEXT,gFontMed);
+    Txt(dc,L"Version "+std::wstring(APP_VERSION),card.left+20,card.top+54,W(card)-40,21,C_MUTED,gFont);
+    Txt(dc,L"Lightweight tools for memory and process management.",card.left+20,card.top+81,W(card)-40,21,C_MUTED,gFontSmall);
+    std::wstring updateText;
+    if(gUpdateCheckInProgress.load())updateText=L"Checking GitHub for updates…";
+    else if(gUpdateAvailable.load())updateText=L"Version "+gLatestVersion+L" is ready to download.";
+    else if(gUpdateCheckSucceeded.load())updateText=L"You are up to date.";
+    else updateText=L"Update checks run automatically every six hours.";
+    Txt(dc,updateText,card.left+20,card.top+111,W(card)-260,23,gUpdateAvailable.load()?C_GREEN:C_MUTED,gFontSmall);
+    DrawButton(dc,R(card.right-204,card.top+48,178,38),
+        gUpdateAvailable.load()?L"Download update":L"Check for updates",
+        gUpdateAvailable.load()?ID_UPDATE:ID_UPDATE_CHECK_NOW,C_ACCENT,RGB(255,255,255),true);
+    RECT repo=R(content.left,326,W(content),88);Card(dc,repo);
+    Txt(dc,L"Project",repo.left+20,repo.top+15,W(repo)-190,23,C_TEXT,gFontMed);
+    Txt(dc,L"View N-Lite source, releases and setup builds on GitHub.",repo.left+20,repo.top+43,W(repo)-190,20,C_MUTED,gFontSmall);
+    DrawButton(dc,R(repo.right-181,repo.top+25,155,37),L"Open GitHub",ID_OPEN_GITHUB,C_PANEL2,C_TEXT);
+}
 static void Paint(HDC dc, int cw, int ch) {
-    Fill(dc,R(0,0,cw,ch),C_BG); gHits.clear();
-    DrawHeader(dc,cw);
-    if(gPage==0) DrawProcesses(dc,cw,ch); else DrawMemory(dc,cw,ch);
+    Fill(dc,R(0,0,cw,ch),C_BG);gHits.clear();
+    DrawHeader(dc,cw,ch);
+    if(gPage==0)DrawMemory(dc,cw,ch);
+    else if(gPage==1)DrawProcesses(dc,cw,ch);
+    else if(gPage==2)DrawStartup(dc,cw);
+    else DrawSettings(dc,cw);
 }
 struct PopupState {
     HWND hwnd=nullptr;DWORD pid=0;int subKind=-1,hoverMain=-1,hoverSub=-1,scroll=0;
-    int anchorX=0,anchorY=0,width=246,height=246;
+    int anchorX=0,anchorY=0,width=492,height=286;
 };
 static PopupState gPopup;
 static ProcRow* FindProcess(DWORD pid) {
@@ -791,21 +934,16 @@ static bool GetAffinity(DWORD pid,DWORD_PTR& procMask,DWORD_PTR& sysMask) {
 }
 static void ResizePopup() {
     if(!gPopup.hwnd)return;
-    int mainRows=6,mainH=mainRows*38+20;
-    int subRows=0;
-    if(gPopup.subKind==1)subRows=5;
-    else if(gPopup.subKind==2){DWORD_PTR pm=0,sm=0;if(GetAffinity(gPopup.pid,pm,sm))for(int i=0;i<static_cast<int>(sizeof(DWORD_PTR)*8);i++)if(sm&(static_cast<DWORD_PTR>(1)<<i))subRows++;}
-    else if(gPopup.subKind==3)subRows=3;
-    int maxH=static_cast<int>(GetSystemMetrics(SM_CYSCREEN))-80;
-    gPopup.height=(std::max)(mainH,(std::min)(maxH,subRows*32+20));
-    gPopup.width=gPopup.subKind<0?246:492;
     RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
+    gPopup.width=(std::min)(492,W(work)-16);gPopup.height=(std::min)(286,H(work)-16);
+    if(gPopup.width<340)gPopup.width=(std::max)(280,W(work));
     int x=gPopup.anchorX,y=gPopup.anchorY;
     if(x+gPopup.width>work.right)x=work.right-gPopup.width;
     if(y+gPopup.height>work.bottom)y=work.bottom-gPopup.height;
     if(x<work.left)x=work.left;if(y<work.top)y=work.top;
-    SetWindowPos(gPopup.hwnd,HWND_TOPMOST,x,y,gPopup.width,gPopup.height,SWP_NOACTIVATE|SWP_SHOWWINDOW);
-    HRGN region=CreateRoundRectRgn(0,0,gPopup.width+1,gPopup.height+1,16,16);SetWindowRgn(gPopup.hwnd,region,TRUE);
+    SetWindowPos(gPopup.hwnd,HWND_TOPMOST,x,y,gPopup.width,gPopup.height,SWP_NOACTIVATE);
+    HRGN region=CreateRoundRectRgn(0,0,gPopup.width+1,gPopup.height+1,16,16);
+    SetWindowRgn(gPopup.hwnd,region,TRUE);
     InvalidateRect(gPopup.hwnd,nullptr,FALSE);
 }
 static void DrawPopupItem(HDC dc,int x,int y,int w,int h,const std::wstring& label,const wchar_t* glyph,bool hover,bool arrow=false,bool checked=false,bool danger=false) {
@@ -817,7 +955,7 @@ static void DrawPopupItem(HDC dc,int x,int y,int w,int h,const std::wstring& lab
     if(checked)Txt(dc,L"✓",x+w-31,y,18,h-2,C_GREEN,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
 }
 static int PopupMainRow(int y){return (y-10)/38;}
-static int PopupSubRow(int y){return gPopup.scroll+(y-10)/32;}
+static int PopupSubRow(int y){return gPopup.scroll+(y-50)/32;}
 static void ClosePopup(){if(gPopup.hwnd)DestroyWindow(gPopup.hwnd);}
 static void ApplyPopupCommand(int kind,int index) {
     ProcRow* p=FindProcess(gPopup.pid);if(!p){ClosePopup();return;}
@@ -840,8 +978,12 @@ static void ApplyPopupCommand(int kind,int index) {
         static const DWORD cls[]={IDLE_PRIORITY_CLASS,BELOW_NORMAL_PRIORITY_CLASS,NORMAL_PRIORITY_CLASS,ABOVE_NORMAL_PRIORITY_CLASS,HIGH_PRIORITY_CLASS};
         if(index<0||index>=5)return;
         HANDLE h=OpenProcess(PROCESS_SET_INFORMATION|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,p->pid);
-        if(h&&SetPriorityClass(h,cls[index]))gStatus=L"Priority updated for "+p->name+L".";else gStatus=L"Windows denied the priority change.";
-        if(h)CloseHandle(h);ClosePopup();InvalidateRect(gWnd,nullptr,FALSE);
+        bool applied=h&&SetPriorityClass(h,cls[index]);
+        if(applied){
+            if(WriteProcessDword(L"Priority",p->path,cls[index]))gStatus=L"Priority saved for future instances of "+p->name+L".";
+            else gStatus=L"Priority changed, but N-Lite could not save it.";
+        }else gStatus=L"Windows denied the priority change.";
+        if(h)CloseHandle(h);ClosePopup();RefreshProcesses();InvalidateRect(gWnd,nullptr,FALSE);
     }else if(kind==2){
         DWORD_PTR procMask=0,sysMask=0;if(!GetAffinity(p->pid,procMask,sysMask))return;
         int core=0,seen=0;
@@ -849,8 +991,10 @@ static void ApplyPopupCommand(int kind,int index) {
         if(core>=static_cast<int>(sizeof(DWORD_PTR)*8))return;
         DWORD_PTR bit=static_cast<DWORD_PTR>(1)<<core,next=procMask^bit;
         HANDLE h=OpenProcess(PROCESS_SET_INFORMATION|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,p->pid);
-        if(h&&next&&SetProcessAffinityMask(h,next))gStatus=L"CPU affinity updated for "+p->name+L".";
-        else gStatus=L"Affinity must keep at least one CPU and Windows must allow the change.";
+        if(h&&next&&SetProcessAffinityMask(h,next)){
+            if(WriteProcessQword(L"Affinity",p->path,static_cast<uint64_t>(next)))gStatus=L"CPU affinity saved for future instances of "+p->name+L".";
+            else gStatus=L"CPU affinity changed, but N-Lite could not save it.";
+        }else gStatus=L"Keep at least one CPU selected; Windows may also deny the change.";
         if(h)CloseHandle(h);InvalidateRect(gWnd,nullptr,FALSE);if(gPopup.hwnd)InvalidateRect(gPopup.hwnd,nullptr,FALSE);
     }else if(kind==3){
         if(index==0||index==1){
@@ -870,46 +1014,83 @@ static LRESULT CALLBACK PopupWndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
     case WM_KILLFOCUS:DestroyWindow(h);return 0;
     case WM_KEYDOWN:if(wp==VK_ESCAPE){DestroyWindow(h);return 0;}break;
     case WM_MOUSEWHEEL:
-        if(gPopup.subKind==2){gPopup.scroll=(std::max)(0,gPopup.scroll-(GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA)*3);InvalidateRect(h,nullptr,FALSE);}return 0;
+        if(gPopup.subKind==2){
+            int count=0;DWORD_PTR pm=0,sm=0;if(GetAffinity(gPopup.pid,pm,sm))for(int i=0;i<static_cast<int>(sizeof(DWORD_PTR)*8);i++)if(sm&(static_cast<DWORD_PTR>(1)<<i))count++;
+            int rows=(std::max)(1,(gPopup.height-60)/32),maxScroll=(std::max)(0,count-rows);
+            gPopup.scroll=(std::max)(0,(std::min)(maxScroll,gPopup.scroll-(GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA)*3));
+            InvalidateRect(h,nullptr,FALSE);
+        }return 0;
     case WM_MOUSEMOVE:{
-        int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp),old=gPopup.subKind;
-        if(x<246){int row=PopupMainRow(y);gPopup.hoverMain=row;
-            if(row==1)gPopup.subKind=1;else if(row==2)gPopup.subKind=2;else if(row==3)gPopup.subKind=3;else gPopup.subKind=-1;
-        }else if(gPopup.subKind>=0)gPopup.hoverSub=PopupSubRow(y);
-        if(old!=gPopup.subKind)ResizePopup();
-        InvalidateRect(h,nullptr,FALSE);return 0;
+        int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp),oldKind=gPopup.subKind,oldMain=gPopup.hoverMain,oldSub=gPopup.hoverSub;
+        if(x<246){
+            int row=PopupMainRow(y);gPopup.hoverMain=(y>=10&&row<6)?row:-1;
+            if(row==1&&gPopup.hoverMain>=0)gPopup.subKind=1;
+            else if(row==2&&gPopup.hoverMain>=0)gPopup.subKind=2;
+            else if(row==3&&gPopup.hoverMain>=0)gPopup.subKind=3;
+            else gPopup.subKind=-1;
+            if(gPopup.subKind!=oldKind){gPopup.scroll=0;gPopup.hoverSub=-1;}
+        }else{
+            gPopup.hoverMain=-1;
+            if(gPopup.subKind>=0&&y>=50)gPopup.hoverSub=(y-50)/32;else gPopup.hoverSub=-1;
+        }
+        if(oldKind!=gPopup.subKind||oldMain!=gPopup.hoverMain||oldSub!=gPopup.hoverSub)InvalidateRect(h,nullptr,FALSE);
+        return 0;
     }
     case WM_LBUTTONUP:{
         int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
-        if(x<246){int row=PopupMainRow(y);if(row==0||row==5)ApplyPopupCommand(0,row);else if(row>=1&&row<=3){gPopup.subKind=row;gPopup.scroll=0;ResizePopup();}}
-        else if(gPopup.subKind==1){int i=PopupSubRow(y);ApplyPopupCommand(1,i);}
-        else if(gPopup.subKind==2){int i=PopupSubRow(y);ApplyPopupCommand(2,i);}
-        else if(gPopup.subKind==3){int i=PopupSubRow(y);ApplyPopupCommand(3,i);}
+        if(x<246){
+            int row=PopupMainRow(y);
+            if(y>=10&&row==0)ApplyPopupCommand(0,0);
+            else if(y>=10&&row==5)ApplyPopupCommand(0,5);
+            else if(y>=10&&row>=1&&row<=3){gPopup.subKind=row;gPopup.scroll=0;gPopup.hoverSub=-1;InvalidateRect(h,nullptr,FALSE);}
+        }else if(gPopup.subKind>=0&&y>=50){
+            int row=PopupSubRow(y);
+            if(gPopup.subKind==1)ApplyPopupCommand(1,row);
+            else if(gPopup.subKind==2)ApplyPopupCommand(2,row);
+            else if(gPopup.subKind==3)ApplyPopupCommand(3,row);
+        }
         return 0;
     }
     case WM_PAINT:{
         PAINTSTRUCT ps;HDC dc=BeginPaint(h,&ps);RECT cr;GetClientRect(h,&cr);
         HBRUSH b=CreateSolidBrush(RGB(20,25,37));FillRect(dc,&cr,b);DeleteObject(b);
+        Line(dc,246,10,246,cr.bottom-10,C_LINE);
         int mainRows=6;
         for(int i=0;i<mainRows;i++){
             int y=10+i*38;
             if(i==4){Line(dc,13,y+17,233,y+17,C_LINE);continue;}
             const wchar_t* glyph=i==0?L"↗":i==1?L"P":i==2?L"C":i==3?L"G":L"×";
             std::wstring label=i==0?L"Open file location":i==1?L"Set priority":i==2?L"CPU affinity":i==3?L"GPU preference":L"End task";
-            DrawPopupItem(dc,0,y,246,37,label,glyph,gPopup.hoverMain==i,i>=1&&i<=3,false,i==5);
+            DrawPopupItem(dc,0,y,246,37,label,glyph,gPopup.hoverMain==i,i>=1&&i<=3,gPopup.subKind==i,i==5);
         }
-        if(gPopup.subKind>=0){
-            Line(dc,246,10,246,cr.bottom-10,C_LINE);
+        ProcRow* p=FindProcess(gPopup.pid);
+        if(gPopup.subKind<0){
+            if(p){
+                HICON icon=GetProcessIcon(*p);if(icon)DrawIconEx(dc,270,24,icon,34,34,0,nullptr,DI_NORMAL);
+                Txt(dc,p->name,314,19,gPopup.width-334,25,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+                Txt(dc,L"PID  "+std::to_wstring(p->pid),314,44,gPopup.width-334,18,C_MUTED,gFontSmall);
+                Line(dc,263,77,gPopup.width-14,77,C_LINE);
+                Txt(dc,L"Working set",266,90,110,20,C_MUTED,gFontSmall);
+                Txt(dc,Bytes(p->hasChildren&&!gExpanded[p->pid]?p->treeWorking:p->working),380,90,gPopup.width-398,20,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+                Txt(dc,L"CPU usage",266,121,110,20,C_MUTED,gFontSmall);
+                Txt(dc,Percent(p->cpu),380,121,gPopup.width-398,20,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+                Txt(dc,L"Choose an action to see its options.",266,168,gPopup.width-286,36,C_MUTED,gFontSmall,DT_LEFT|DT_TOP|DT_WORDBREAK);
+            }else Txt(dc,L"Process is no longer running.",266,24,gPopup.width-282,30,C_MUTED,gFont);
+        }else{
+            const wchar_t* title=gPopup.subKind==1?L"Process priority":gPopup.subKind==2?L"CPU affinity":L"GPU preference";
+            Txt(dc,title,264,12,gPopup.width-278,25,C_TEXT,gFontMed);
+            Txt(dc,p?p->name:L"Process",264,33,gPopup.width-278,17,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+            Line(dc,260,47,gPopup.width-12,47,C_LINE);
             int count=0;
             if(gPopup.subKind==1)count=5;
             else if(gPopup.subKind==2){DWORD_PTR pm=0,sm=0;if(GetAffinity(gPopup.pid,pm,sm))for(int i=0;i<static_cast<int>(sizeof(DWORD_PTR)*8);i++)if(sm&(static_cast<DWORD_PTR>(1)<<i))count++;}
             else count=3;
-            int rows=(std::max)(1,(H(cr)-20)/32),begin=gPopup.subKind==2?gPopup.scroll:0,end=(std::min)(count,begin+rows);
-            ProcRow* p=FindProcess(gPopup.pid);DWORD_PTR pm=0,sm=0;if(gPopup.subKind==2)GetAffinity(gPopup.pid,pm,sm);
+            int rows=(std::max)(1,(gPopup.height-60)/32),begin=gPopup.subKind==2?gPopup.scroll:0,end=(std::min)(count,begin+rows);
+            DWORD_PTR pm=0,sm=0;if(gPopup.subKind==2)GetAffinity(gPopup.pid,pm,sm);
             DWORD prio=0;HANDLE hp=p?OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,p->pid):nullptr;if(hp){prio=GetPriorityClass(hp);CloseHandle(hp);}
             std::wstring pref=p?GpuPreference(p->path):L"";
             for(int i=begin;i<end;i++){
-                int y=10+(i-begin)*32;std::wstring label;const wchar_t* glyph=L"•";bool checked=false;
+                int y=51+(i-begin)*32;std::wstring label;const wchar_t* glyph=L"•";bool checked=false;
                 if(gPopup.subKind==1){
                     static const wchar_t* names[]={L"Idle",L"Below normal",L"Normal",L"Above normal",L"High"};
                     static const DWORD classes[]={IDLE_PRIORITY_CLASS,BELOW_NORMAL_PRIORITY_CLASS,NORMAL_PRIORITY_CLASS,ABOVE_NORMAL_PRIORITY_CLASS,HIGH_PRIORITY_CLASS};
@@ -919,9 +1100,9 @@ static LRESULT CALLBACK PopupWndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
                     label=L"CPU "+std::to_wstring(core);checked=(pm&(static_cast<DWORD_PTR>(1)<<core))!=0;glyph=L"C";
                 }else{
                     static const wchar_t* names[]={L"High performance",L"Power saving",L"Use Windows default"};
-                    label=names[i];checked=(i==0&&pref.find(L"=2")!=std::wstring::npos)||(i==1&&pref.find(L"=1")!=std::wstring::npos);glyph=L"G";
+                    label=names[i];checked=(i==0&&pref.find(L"=2")!=std::wstring::npos)||(i==1&&pref.find(L"=1")!=std::wstring::npos)||(i==2&&pref.empty());glyph=L"G";
                 }
-                DrawPopupItem(dc,248,y,244,31,label,glyph,gPopup.hoverSub==i,false,checked);
+                DrawPopupItem(dc,248,y,gPopup.width-248,31,label,glyph,gPopup.hoverSub==i,false,checked);
             }
         }
         EndPaint(h,&ps);return 0;
@@ -933,12 +1114,11 @@ static LRESULT CALLBACK PopupWndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
 static void OpenProcessPopup(DWORD pid,int sx,int sy) {
     if(gPopup.hwnd)DestroyWindow(gPopup.hwnd);
     gSelectedPid=pid;gPopup=PopupState{};gPopup.pid=pid;gPopup.anchorX=sx;gPopup.anchorY=sy;
-    gPopup.hwnd=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_LAYERED,POPUP_CLASS,L"",WS_POPUP,
-        sx,sy,246,246,gWnd,nullptr,GetModuleHandleW(nullptr),nullptr);
+    gPopup.hwnd=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW,POPUP_CLASS,L"",WS_POPUP,
+        sx,sy,gPopup.width,gPopup.height,gWnd,nullptr,GetModuleHandleW(nullptr),nullptr);
     if(!gPopup.hwnd)return;
-    SetLayeredWindowAttributes(gPopup.hwnd,0,250,LWA_ALPHA);
     ResizePopup();ShowWindow(gPopup.hwnd,SW_SHOW);SetForegroundWindow(gPopup.hwnd);SetFocus(gPopup.hwnd);
-    AnimateWindow(gPopup.hwnd,85,AW_BLEND|AW_ACTIVATE);InvalidateRect(gWnd,nullptr,FALSE);
+    InvalidateRect(gWnd,nullptr,FALSE);
 }
 static void CommitThresholdEdit() {
     if(!gThresholdFocus)return;
@@ -957,7 +1137,8 @@ static void SaveToggleAuto() {
 static void HandleClick(int x,int y,bool dbl) {
     Hit* target=nullptr;
     for(auto it=gHits.rbegin();it!=gHits.rend();++it)if(Inside(it->r,x,y)){target=&*it;break;}
-    if(dbl&&(!target||target->id!=100))return;
+    if(gIntervalOpen&&(!target||(target->id!=ID_INTERVAL_FIELD&&target->id!=ID_INTERVAL_OPTION))){gIntervalOpen=false;gIntervalHover=-1;}
+    if(dbl&&(!target||(target->id!=100&&target->id!=101)))return;
     if(gThresholdFocus&&(!target||target->id!=ID_THRESHOLD_FIELD))CommitThresholdEdit();
     if(!target){gSearchFocus=false;InvalidateRect(gWnd,nullptr,FALSE);return;}
     int id=target->id;
@@ -967,17 +1148,19 @@ static void HandleClick(int x,int y,bool dbl) {
         else{gSortColumn=next;gSortDescending=next>=2;}
         gScroll=0;RefreshProcesses();
     }
-    else if(id==ID_PROCESSES){gPage=0;gSearchFocus=false;}
-    else if(id==ID_MEMORY){gPage=1;gSearchFocus=false;}
+    else if(id==ID_MEMORY){gPage=0;gSearchFocus=false;}
+    else if(id==ID_PROCESSES){gPage=1;gSearchFocus=false;RefreshProcesses();}
+    else if(id==ID_STARTUP){gPage=2;gSearchFocus=false;}
+    else if(id==ID_SETTINGS){gPage=3;gSearchFocus=false;}
     else if(id==ID_UPDATE)OpenLatestRelease();
+    else if(id==ID_UPDATE_CHECK_NOW){CheckForUpdatesAsync();}
+    else if(id==ID_OPEN_GITHUB)ShellExecuteW(gWnd,L"open",L"https://github.com/gxlka/N-Lite",nullptr,nullptr,SW_SHOWNORMAL);
     else if(id==ID_REFRESH){RefreshProcesses();UpdateMetrics();gStatus=L"Process list refreshed.";}
     else if(id==ID_SEARCH){gSearchFocus=true;gThresholdFocus=false;}
     else if(id==ID_THRESHOLD_FIELD){gThresholdFocus=true;gThresholdReplaceOnType=true;gThresholdEdit=std::to_wstring(gThresholdMB);gSearchFocus=false;}
     else if(id==ID_AUTO)SaveToggleAuto();
-    else if(id==ID_THRESHOLD_DOWN){gThresholdMB=(std::max)(64u,gThresholdMB>256?gThresholdMB-256:64u);SaveSettings();}
-    else if(id==ID_THRESHOLD_UP){gThresholdMB=(std::min)(131072u,gThresholdMB+256);SaveSettings();}
-    else if(id==ID_INTERVAL_DOWN){gIntervalSec=(std::max)(60u,gIntervalSec>60?gIntervalSec-60:60u);SaveSettings();}
-    else if(id==ID_INTERVAL_UP){gIntervalSec=(std::min)(7200u,gIntervalSec+60);SaveSettings();}
+    else if(id==ID_INTERVAL_FIELD){gIntervalOpen=!gIntervalOpen;gIntervalHover=-1;}
+    else if(id==ID_INTERVAL_OPTION){gIntervalSec=target->data;gIntervalOpen=false;gIntervalHover=-1;SaveSettings();gStatus=L"Automatic clean interval saved.";}
     else if(id==ID_PURGE)DoPurge(true);
     else if(id==ID_ELEVATE)RequestElevatedPurge();
     else if(id==ID_AUTOSTART){
@@ -989,8 +1172,8 @@ static void HandleClick(int x,int y,bool dbl) {
         gTimerEnabled=!gTimerEnabled;
         if(gTimerEnabled)SetTimerRequest(true);else SetTimerRequest(false);
         SaveSettings();
-        if(gTimerEnabled&&gTimerActive)gStatus=L"Sub-millisecond timer request enabled and saved.";
-        else if(!gTimerEnabled)gStatus=L"Timer resolution request disabled.";
+        if(gTimerEnabled&&gTimerActive)gStatus=L"Timer resolution enabled and saved.";
+        else if(!gTimerEnabled)gStatus=L"Timer resolution disabled.";
     }
     else if(id==ID_TIMER_PLUS){
         RECT r=target->r;double den=(std::max)(1,W(r)-14);
@@ -1016,9 +1199,9 @@ static void HandleClick(int x,int y,bool dbl) {
             }
         }
     }
-    else if(id==100){
+    else if(id==100||id==101){
         gSelectedPid=target->data;
-        if(dbl){
+        if((id==101&&!dbl)||(id==100&&dbl)){
             auto p=std::find_if(gProcs.begin(),gProcs.end(),[&](const ProcRow& a){return a.pid==gSelectedPid;});
             if(p!=gProcs.end()&&p->hasChildren)gExpanded[p->pid]=!gExpanded[p->pid];
             RefreshProcesses();
@@ -1040,7 +1223,7 @@ static void ShowTrayMenu() {
 static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
     switch(msg){
     case WM_CREATE: {
-        gWnd=h; LoadNt(); LoadSettings(); gAutoStart=ReadAutoStart();
+        gWnd=h; LoadNt(); LoadSettings(); gAutoStart=ReadAutoStart();gHasProcessOverrides=ProcessOverridesExist();
         SYSTEM_INFO si{};GetSystemInfo(&si);gPageSize=si.dwPageSize?si.dwPageSize:4096;
         LoadTimerRange();if(gTimerEnabled)SetTimerRequest(true);
         gFont=CreateFontW(-15,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
@@ -1055,7 +1238,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
         return 0;
     }
     case WM_GETMINMAXINFO: {
-        auto m=reinterpret_cast<MINMAXINFO*>(lp);m->ptMinTrackSize.x=960;m->ptMinTrackSize.y=790;return 0;
+        auto m=reinterpret_cast<MINMAXINFO*>(lp);m->ptMinTrackSize.x=960;m->ptMinTrackSize.y=620;return 0;
     }
     case WM_SIZE:
         if(wp==SIZE_MINIMIZED)HideToTray();else InvalidateRect(h,nullptr,FALSE);return 0;
@@ -1072,7 +1255,8 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
     case WM_TIMER:
         if(wp==TIMER_UPDATE_CHECK){CheckForUpdatesAsync();return 0;}
         if(wp==TIMER_REFRESH){
-            if(IsWindowVisible(h)){UpdateMetrics();if(gPage==0)RefreshProcesses();}
+            if(IsWindowVisible(h))UpdateMetrics();
+            if((IsWindowVisible(h)&&gPage==1)||(gHasProcessOverrides&&GetTickCount()-gLastRefresh>=5000))RefreshProcesses();
             if(gAutoPurge){
                 DWORD ready=0,enabled=0;RegReadDword(L"AutoTaskReady",ready);RegReadDword(L"AutoPurge",enabled);gAutoTaskReady=ready!=0;
                 if(!enabled){gAutoPurge=false;gStatus=L"Automatic cleaning setup failed or was disabled.";SaveSettings();}
@@ -1085,18 +1269,27 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
             if(IsWindowVisible(h))InvalidateRect(h,nullptr,FALSE);
         } return 0;
     case WM_MOUSEMOVE:{
-        POINT pt{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};DWORD hover=0;bool hand=false;
-        if(gPage==0)for(auto it=gHits.rbegin();it!=gHits.rend();++it){
-            if(it->id==100&&Inside(it->r,pt.x,pt.y)){hover=it->data;hand=true;break;}
-            if(it->id>=ID_SORT_NAME&&it->id<=ID_SORT_PRIVATE&&Inside(it->r,pt.x,pt.y)){hand=true;break;}
+        POINT pt{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};DWORD hover=0;int nav=-1,intervalHover=-1;bool hand=false;
+        static const unsigned choices[]={60,120,300,600,900,1800,3600,7200};
+        for(auto it=gHits.rbegin();it!=gHits.rend();++it)if(Inside(it->r,pt.x,pt.y)){
+            if(it->id==ID_MEMORY||it->id==ID_PROCESSES||it->id==ID_STARTUP||it->id==ID_SETTINGS){nav=it->id;hand=true;}
+            if(gPage==1&&(it->id==100||it->id==101)){hover=it->data;hand=true;}
+            if(gPage==1&&it->id>=ID_SORT_NAME&&it->id<=ID_SORT_PRIVATE)hand=true;
+            if(it->id==ID_INTERVAL_FIELD||it->id==ID_INTERVAL_OPTION)hand=true;
+            if(it->id==ID_INTERVAL_OPTION)for(int i=0;i<static_cast<int>(sizeof(choices)/sizeof(choices[0]));++i)if(choices[i]==it->data)intervalHover=i;
+            break;
         }
-        if(hover!=gHoveredPid){gHoveredPid=hover;InvalidateRect(h,nullptr,FALSE);}
+        bool repaint=false;
+        if(gPage==1&&hover!=gHoveredPid){gHoveredPid=hover;repaint=true;}
+        if(nav!=gNavHover){gNavHover=nav;repaint=true;}
+        if(intervalHover!=gIntervalHover){gIntervalHover=intervalHover;if(gIntervalOpen)repaint=true;}
+        if(repaint)InvalidateRect(h,nullptr,FALSE);
         SetCursor(LoadCursorW(nullptr,hand?IDC_HAND:IDC_ARROW));return 0;
     }
     case WM_RBUTTONUP:{
-        if(gPage==0){
+        if(gPage==1){
             int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
-            for(auto it=gHits.rbegin();it!=gHits.rend();++it)if(it->id==100&&Inside(it->r,x,y)){
+            for(auto it=gHits.rbegin();it!=gHits.rend();++it)if((it->id==100||it->id==101)&&Inside(it->r,x,y)){
                 POINT pt{x,y};ClientToScreen(h,&pt);OpenProcessPopup(it->data,pt.x,pt.y);return 0;
             }
         }
@@ -1105,7 +1298,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
     case WM_LBUTTONUP:HandleClick(GET_X_LPARAM(lp),GET_Y_LPARAM(lp),false);return 0;
     case WM_LBUTTONDBLCLK:HandleClick(GET_X_LPARAM(lp),GET_Y_LPARAM(lp),true);return 0;
     case WM_MOUSEWHEEL:
-        if(gPage==0){gScroll=(std::max)(0,gScroll-(GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA)*3);RefreshProcesses();InvalidateRect(h,nullptr,FALSE);}return 0;
+        if(gPage==1){gScroll=(std::max)(0,gScroll-(GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA)*3);RefreshProcesses();InvalidateRect(h,nullptr,FALSE);}return 0;
     case WM_CHAR:
         if(gThresholdFocus){
             if(wp==13){CommitThresholdEdit();InvalidateRect(h,nullptr,FALSE);return 0;}
@@ -1116,7 +1309,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
             }
             InvalidateRect(h,nullptr,FALSE);return 0;
         }
-        if(gSearchFocus&&gPage==0){
+        if(gSearchFocus&&gPage==1){
             if(wp==8){if(!gSearch.empty())gSearch.pop_back();}
             else if(wp>=32&&wp<127&&gSearch.size()<80)gSearch.push_back(static_cast<wchar_t>(wp));
             gScroll=0;RefreshProcesses();InvalidateRect(h,nullptr,FALSE);return 0;
@@ -1126,7 +1319,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
         else if(wp==VK_RETURN&&gThresholdFocus){CommitThresholdEdit();InvalidateRect(h,nullptr,FALSE);}
         else if(wp==L'A'&&(GetKeyState(VK_CONTROL)&0x8000)&&gThresholdFocus){gThresholdEdit.clear();gThresholdReplaceOnType=false;InvalidateRect(h,nullptr,FALSE);}
         else if(wp==VK_ESCAPE&&gSearchFocus){gSearch.clear();gSearchFocus=false;RefreshProcesses();InvalidateRect(h,nullptr,FALSE);}
-        else if(gPage==0&&(wp==VK_DOWN||wp==VK_UP)){
+        else if(gPage==1&&(wp==VK_DOWN||wp==VK_UP)){
             auto it=std::find_if(gVisible.begin(),gVisible.end(),[](const ProcRow& p){return p.pid==gSelectedPid;});
             int i=it==gVisible.end()?0:static_cast<int>(it-gVisible.begin());
             i=(std::max)(0,(std::min)(static_cast<int>(gVisible.size())-1,i+(wp==VK_DOWN?1:-1)));
@@ -1166,7 +1359,7 @@ int WINAPI wWinMain(HINSTANCE inst,HINSTANCE, PWSTR cmd,int show) {
     wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.hIcon=LoadIconW(nullptr,IDI_APPLICATION);wc.hIconSm=wc.hIcon;
     wc.hbrBackground=nullptr;wc.style=CS_DBLCLKS;
     if(!RegisterClassExW(&wc))return 1;
-    HWND h=CreateWindowExW(0,APP_CLASS,L"N-Lite",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,830,nullptr,nullptr,inst,nullptr);
+    HWND h=CreateWindowExW(0,APP_CLASS,L"N Lite",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,830,nullptr,nullptr,inst,nullptr);
     if(!h)return 1;
     AddTray();
     if(args.find(L"--startup")!=std::wstring::npos)ShowWindow(h,SW_HIDE);

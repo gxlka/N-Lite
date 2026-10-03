@@ -1,26 +1,25 @@
 # N-Lite
 
-N-Lite is a small native Windows system utility built with the Win32 API and C++.
+N-Lite is a lightweight native Windows utility built with the Win32 API and C++.
 
-## Features
+## Pages and features
 
-- Process view with executable icons, process tree expansion, CPU and memory columns, search, and row context actions.
-- Custom process actions for ending a process, changing priority, CPU affinity, GPU preference, and opening its file location.
-- Memory dashboard for RAM in use, available memory, free pages, standby list, system commit charge, and page-file usage.
-- Editable standby threshold (64–131072 MB) and automatic standby cleaning through a scheduled task. Windows asks for administrator approval once when enabling the cleaner.
-- Timer-resolution control using the lowest resolution Windows reports as supported. Its enable state and chosen value are saved and reapplied at app launch.
-- Tray mode, optional Windows startup, and an update notification that checks GitHub Releases at launch and every six hours.
+- **Memory** shows RAM in use, available memory, standby-list size, page-file usage and system commit. The standby cleaner has an editable threshold, selectable check interval, automatic purge and a manual clean action. Timer resolution can be selected down to the lowest value Windows reports and is restored whenever N-Lite starts.
+- **Processes** lists executable icons, PID, CPU, working set and private memory. Process groups start collapsed and show the combined working set and private bytes of their child processes; expanding a group shows each process separately. Columns can be sorted and processes can be searched.
+- **Process actions** include ending a process, opening its file location, changing priority, setting CPU affinity and choosing a GPU preference. N-Lite saves priority and CPU-affinity choices per executable and reapplies them to later instances. GPU preferences are stored in the current Windows user profile.
+- **Startup** controls whether N-Lite launches quietly in the notification area when you sign in.
+- **Settings** shows the installed version and lets you check for updates or open the GitHub project. Update checks also run at launch and every six hours.
 
-Automatic standby cleaning requires an elevated scheduled task because Windows protects standby-list purging. The task checks once per minute and honors the configured threshold and interval. A failed purge is retried.
+Automatic standby cleaning uses an elevated scheduled task because Windows protects standby-list purging. The task checks once per minute and honors the configured threshold and interval.
 
-## Build
+## Build and install
 
-Use the repository's GitHub Actions workflow to build the x64 portable executable and the Windows setup installer. Each build publishes both N-Lite.exe and N-Lite-Setup-x64.exe in the N-Lite-Windows-x64 Actions artifact.
+GitHub Actions builds the x64 portable executable and the Windows setup installer. The N-Lite-Windows-x64 Actions artifact contains N-Lite.exe and N-Lite-Setup-x64.exe.
 
-The installer installs per-user under LocalAppData, creates a Start Menu shortcut, and offers startup and desktop shortcut options. It does not require administrator rights.
+The installer installs per-user under LocalAppData, creates a Start Menu shortcut and offers optional Windows startup and desktop shortcut settings. It does not require administrator rights.
 
-To publish an update, push a version tag such as v0.3.0. The workflow builds that version and attaches both the portable executable and N-Lite-Setup-x64.exe to a GitHub Release. N-Lite checks the latest release and shows an update button in the app when its version is newer.
+To publish an update, push a version tag such as v0.3.0. The workflow builds that version and attaches both the portable executable and setup installer to a GitHub Release. N-Lite shows an in-app update button when a release is newer than the installed version.
 
 ## Runtime behavior
 
-The application starts hidden in the tray when launched with the Windows startup entry. Closing or minimizing the main window keeps N-Lite in the tray; use the tray menu to exit.
+Closing or minimizing the main window keeps N-Lite in the notification area. Use the tray menu to reopen the window or exit.
