@@ -128,6 +128,13 @@ inline uint64_t StandbyBytesFromPageCounts(const SystemMemoryListInfo& info, uin
     return pages * pageSize;
 }
 
+inline uint64_t FreeBytesFromPageCount(const SystemMemoryListInfo& info, uint32_t pageSize) {
+    return static_cast<uint64_t>(info.freePageCount) * pageSize;
+}
+
+inline constexpr uint32_t kSystemMemoryListInformationClass = 80;
+inline constexpr uint32_t kMemoryPurgeStandbyListCommand = 4;
+
 inline bool IsValidCleanerSid(const std::wstring& sid) {
     if (sid.size() < 9 || sid.size() > 184 || sid.compare(0, 4, L"S-1-") != 0 || sid.back() == L'-') return false;
     size_t start = 4;
@@ -274,14 +281,4 @@ inline bool ShouldRunAutoClean(const CleanerSettings& settings, uint64_t standby
         static_cast<uint64_t>(settings.intervalSeconds) * 1000u;
 }
 
-enum class CleanerBadgeState { Off, On, SetupNeeded, UpdateNeeded, SettingUp };
-
 inline constexpr bool kAutoCleanDefaultEnabled = false;
-
-inline CleanerBadgeState CleanerBadgeFor(bool autoEnabled, bool setupBusy,
-    bool helperCurrent, bool helperInstalled, bool setupBlocked = false) {
-    if (setupBusy) return CleanerBadgeState::SettingUp;
-    if (!autoEnabled) return CleanerBadgeState::Off;
-    if (helperCurrent || (helperInstalled && setupBlocked)) return CleanerBadgeState::On;
-    return helperInstalled ? CleanerBadgeState::UpdateNeeded : CleanerBadgeState::SetupNeeded;
-}
