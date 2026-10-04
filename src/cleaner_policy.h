@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <cwctype>
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 enum class CleanerSetupAction {
     Install,
@@ -32,7 +34,8 @@ inline bool CanUseRegisteredCleanerTask(bool helperInstalled, bool helperCurrent
 
 inline bool ShouldSuppressCleanerUpdateRetry(bool helperInstalled, bool helperCurrent,
                                              uint32_t currentVersion, uint32_t failedVersion) {
-    return helperInstalled && !helperCurrent && currentVersion != 0 &&
+    (void)helperInstalled;
+    return !helperCurrent && currentVersion != 0 &&
         currentVersion == failedVersion;
 }
 
@@ -54,6 +57,12 @@ struct CleanerStatus {
     uint64_t lastAutoTick = 0;
     int32_t lastAutoStatus = 0;
     bool autoArmed = true;
+    bool standbyValid = false;
+    uint64_t standbyBytes = 0;
+    uint64_t standbyTick = 0;
+    bool manualStandbyValid = false;
+    uint64_t manualStandbyBefore = 0;
+    uint64_t manualStandbyAfter = 0;
 };
 
 struct SystemMemoryListInfo {
@@ -66,6 +75,40 @@ struct SystemMemoryListInfo {
     uint32_t repurposed[8]{};
     uint32_t modifiedPageCountPageFile = 0;
 };
+
+inline constexpr uint32_t kSystemMemoryListInformationClass = 80;
+inline constexpr uint32_t kMemoryPurgeStandbyListCommand = 4;
+
+template <typename Query>
+inline bool QuerySystemMemoryListInfo(Query query, SystemMemoryListInfo& output,
+                                      int32_t* statusOut = nullptr,
+                                      uint32_t* returnLengthOut = nullptr) {
+    constexpr int32_t kInfoLengthMismatch = static_cast<int32_t>(0xC0000004u);
+    constexpr size_t kMaximumBufferSize = 65536;
+    std::vector<uint8_t> buffer(sizeof(SystemMemoryListInfo));
+    int32_t status = 0;
+    uint32_t returnLength = 0;
+    for (unsigned attempt = 0; attempt < 6; ++attempt) {
+        returnLength = 0;
+        status = query(kSystemMemoryListInformationClass, buffer.data(),
+            static_cast<uint32_t>(buffer.size()), &returnLength);
+        if (status >= 0) {
+            if (buffer.size() < sizeof(output)) break;
+            std::memcpy(&output, buffer.data(), sizeof(output));
+            if (statusOut) *statusOut = status;
+            if (returnLengthOut) *returnLengthOut = returnLength;
+            return true;
+        }
+        if (status != kInfoLengthMismatch) break;
+        const size_t nextSize = returnLength > buffer.size() ?
+            static_cast<size_t>(returnLength) : buffer.size() * 2;
+        if (nextSize <= buffer.size() || nextSize > kMaximumBufferSize) break;
+        buffer.resize(nextSize);
+    }
+    if (statusOut) *statusOut = status;
+    if (returnLengthOut) *returnLengthOut = returnLength;
+    return false;
+}
 
 inline bool CleanerPolicyEquals(const std::wstring& left, const wchar_t* right) {
     if (left.size() != std::char_traits<wchar_t>::length(right)) return false;
@@ -135,9 +178,6 @@ inline uint64_t StandbyBytesFromPageCounts(const SystemMemoryListInfo& info, uin
 inline uint64_t FreeBytesFromPageCount(const SystemMemoryListInfo& info, uint32_t pageSize) {
     return static_cast<uint64_t>(info.freePageCount) * pageSize;
 }
-
-inline constexpr uint32_t kSystemMemoryListInformationClass = 80;
-inline constexpr uint32_t kMemoryPurgeStandbyListCommand = 4;
 
 inline bool IsValidCleanerSid(const std::wstring& sid) {
     if (sid.size() < 9 || sid.size() > 184 || sid.compare(0, 4, L"S-1-") != 0 || sid.back() == L'-') return false;
@@ -228,17 +268,26 @@ inline std::wstring SerializeCleanerSettings(const CleanerSettings& settings) {
 
 inline bool ParseCleanerStatus(const std::wstring& text, CleanerStatus& output) {
     std::unordered_map<std::wstring, std::wstring> fields;
-    static const wchar_t* const keys[] = {
+    static const wchar_t* const v1Keys[] = {
         L"version", L"helper_version", L"completed_manual_request_id", L"last_manual_status",
         L"last_auto_tick", L"last_auto_status", L"auto_armed"
     };
-    if (!cleaner_policy_detail::ParseFields(text, fields) ||
-        !cleaner_policy_detail::HasExactFields(fields, keys, sizeof(keys) / sizeof(keys[0]))) return false;
+    static const wchar_t* const v2Keys[] = {
+        L"version", L"helper_version", L"completed_manual_request_id", L"last_manual_status",
+        L"last_auto_tick", L"last_auto_status", L"auto_armed", L"standby_valid",
+        L"standby_bytes", L"standby_tick", L"manual_standby_valid",
+        L"manual_standby_before", L"manual_standby_after"
+    };
+    if (!cleaner_policy_detail::ParseFields(text, fields)) return false;
+    uint64_t version = 0;
+    if (!cleaner_policy_detail::ParseUnsigned(fields[L"version"], version)) return false;
+    if ((version == 1 && !cleaner_policy_detail::HasExactFields(fields, v1Keys, sizeof(v1Keys) / sizeof(v1Keys[0]))) ||
+        (version == 2 && !cleaner_policy_detail::HasExactFields(fields, v2Keys, sizeof(v2Keys) / sizeof(v2Keys[0]))) ||
+        (version != 1 && version != 2)) return false;
 
-    uint64_t version = 0, helperVersion = 0, requestId = 0, manualStatus = 0;
+    uint64_t helperVersion = 0, requestId = 0, manualStatus = 0;
     uint64_t autoTick = 0, autoStatus = 0, armed = 0;
-    if (!cleaner_policy_detail::ParseUnsigned(fields[L"version"], version) || version != 1 ||
-        !cleaner_policy_detail::ParseUnsigned(fields[L"helper_version"], helperVersion) || helperVersion > UINT32_MAX ||
+    if (!cleaner_policy_detail::ParseUnsigned(fields[L"helper_version"], helperVersion) || helperVersion > UINT32_MAX ||
         !cleaner_policy_detail::ParseUnsigned(fields[L"completed_manual_request_id"], requestId) ||
         !cleaner_policy_detail::ParseUnsigned(fields[L"last_manual_status"], manualStatus) || manualStatus > UINT32_MAX ||
         !cleaner_policy_detail::ParseUnsigned(fields[L"last_auto_tick"], autoTick) ||
@@ -252,6 +301,22 @@ inline bool ParseCleanerStatus(const std::wstring& text, CleanerStatus& output) 
     parsed.lastAutoTick = autoTick;
     parsed.lastAutoStatus = static_cast<int32_t>(static_cast<uint32_t>(autoStatus));
     parsed.autoArmed = armed != 0;
+    if (version == 2) {
+        uint64_t standbyValid = 0, standbyBytes = 0, standbyTick = 0;
+        uint64_t manualStandbyValid = 0, manualStandbyBefore = 0, manualStandbyAfter = 0;
+        if (!cleaner_policy_detail::ParseUnsigned(fields[L"standby_valid"], standbyValid) || standbyValid > 1 ||
+            !cleaner_policy_detail::ParseUnsigned(fields[L"standby_bytes"], standbyBytes) ||
+            !cleaner_policy_detail::ParseUnsigned(fields[L"standby_tick"], standbyTick) ||
+            !cleaner_policy_detail::ParseUnsigned(fields[L"manual_standby_valid"], manualStandbyValid) || manualStandbyValid > 1 ||
+            !cleaner_policy_detail::ParseUnsigned(fields[L"manual_standby_before"], manualStandbyBefore) ||
+            !cleaner_policy_detail::ParseUnsigned(fields[L"manual_standby_after"], manualStandbyAfter)) return false;
+        parsed.standbyValid = standbyValid != 0;
+        parsed.standbyBytes = standbyBytes;
+        parsed.standbyTick = standbyTick;
+        parsed.manualStandbyValid = manualStandbyValid != 0;
+        parsed.manualStandbyBefore = manualStandbyBefore;
+        parsed.manualStandbyAfter = manualStandbyAfter;
+    }
     output = parsed;
     return true;
 }
@@ -263,12 +328,18 @@ inline bool ParseCleanerStatusOrDefault(const std::wstring& text, CleanerStatus&
 }
 
 inline std::wstring SerializeCleanerStatus(const CleanerStatus& status) {
-    return L"version=1\nhelper_version=" + std::to_wstring(status.helperVersion) +
+    return L"version=2\nhelper_version=" + std::to_wstring(status.helperVersion) +
         L"\ncompleted_manual_request_id=" + std::to_wstring(status.completedManualRequestId) +
         L"\nlast_manual_status=" + std::to_wstring(static_cast<uint32_t>(status.lastManualStatus)) +
         L"\nlast_auto_tick=" + std::to_wstring(status.lastAutoTick) +
         L"\nlast_auto_status=" + std::to_wstring(static_cast<uint32_t>(status.lastAutoStatus)) +
-        L"\nauto_armed=" + std::to_wstring(status.autoArmed ? 1 : 0) + L"\n";
+        L"\nauto_armed=" + std::to_wstring(status.autoArmed ? 1 : 0) +
+        L"\nstandby_valid=" + std::to_wstring(status.standbyValid ? 1 : 0) +
+        L"\nstandby_bytes=" + std::to_wstring(status.standbyBytes) +
+        L"\nstandby_tick=" + std::to_wstring(status.standbyTick) +
+        L"\nmanual_standby_valid=" + std::to_wstring(status.manualStandbyValid ? 1 : 0) +
+        L"\nmanual_standby_before=" + std::to_wstring(status.manualStandbyBefore) +
+        L"\nmanual_standby_after=" + std::to_wstring(status.manualStandbyAfter) + L"\n";
 }
 
 inline bool StandbyCleanSucceeded(int32_t status, uint64_t beforeBytes, uint64_t afterBytes,

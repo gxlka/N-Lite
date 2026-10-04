@@ -15,10 +15,11 @@ struct StartupItem {
     StartupKind kind = StartupKind::UserRun;
     DWORD registryView = KEY_WOW64_64KEY, valueType = REG_SZ;
     std::vector<BYTE> rawData;
-    bool enabled = true, canToggle = false, disabledBackup = false;
+    bool enabled = true, canToggle = false, canDelete = false, disabledBackup = false;
     bool approvalManaged = false;
 };
 
 std::vector<StartupItem> EnumerateStartupItems();
 bool SetStartupItemEnabled(StartupItem& item, bool enabled);
+bool DeleteStartupItem(StartupItem& item);
 bool AddStartupApplication(HWND owner, std::wstring& addedName);

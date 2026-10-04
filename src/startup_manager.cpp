@@ -104,12 +104,33 @@ void AddRunItems(std::vector<StartupItem>& items,HKEY root,StartupKind kind,DWOR
         item.command=RawString(item.rawData);item.source=SourceName(kind,view);item.kind=kind;
         item.registryView=view;item.valueType=type;
         item.canToggle=IsUserRegistryStartup(kind)&&item.name.find_first_of(L"\\/")==std::wstring::npos;
+        item.canDelete=IsUserRegistryStartup(kind);
         if(kind==StartupKind::UserRun||kind==StartupKind::MachineRun){
             item.approvalSubkey=ApprovalSubkey(kind,view);item.approvalName=item.name;
             item.approvalManaged=kind==StartupKind::UserRun&&item.canToggle;
             const StartupApprovalState state=ReadApproval(root,item.approvalSubkey,view,item.name);
             item.enabled=StartupSourceEnabled(true,state);
         }
+        items.push_back(std::move(item));
+    }
+    RegCloseKey(key);
+}
+void AddPolicyRunItems(std::vector<StartupItem>& items,HKEY root,const wchar_t* subkey,
+                       const wchar_t* source,DWORD view,bool currentUser) {
+    HKEY key=nullptr;
+    if(RegOpenKeyExW(root,subkey,0,KEY_QUERY_VALUE|view,&key)!=ERROR_SUCCESS)return;
+    DWORD count=0,maxName=0,maxData=0;
+    if(RegQueryInfoKeyW(key,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,&count,&maxName,&maxData,nullptr,nullptr)!=ERROR_SUCCESS){RegCloseKey(key);return;}
+    std::vector<wchar_t> name(static_cast<size_t>(maxName)+2);
+    std::vector<BYTE> data(static_cast<size_t>(maxData)+2);
+    for(DWORD index=0;index<count;++index){
+        DWORD nameSize=static_cast<DWORD>(name.size()-1),dataSize=static_cast<DWORD>(data.size()),type=0;
+        const LONG result=RegEnumValueW(key,index,name.data(),&nameSize,nullptr,&type,data.data(),&dataSize);
+        if(result!=ERROR_SUCCESS||(type!=REG_SZ&&type!=REG_EXPAND_SZ)||!nameSize)continue;
+        StartupItem item;item.name.assign(name.data(),nameSize);item.rawData.assign(data.begin(),data.begin()+dataSize);
+        item.command=RawString(item.rawData);item.kind=currentUser?StartupKind::UserRun:StartupKind::MachineRun;
+        item.source=std::wstring(source)+(view==KEY_WOW64_32KEY?L" (32-bit)":L" (64-bit)");
+        item.registryView=view;item.valueType=type;item.enabled=true;
         items.push_back(std::move(item));
     }
     RegCloseKey(key);
@@ -133,6 +154,7 @@ void AddDisabledItems(std::vector<StartupItem>& items,StartupKind kind,DWORD vie
             if(result==ERROR_SUCCESS){bytes.resize(dataSize);StartupItem item;item.name=valueName;item.rawData=std::move(bytes);
                 item.command=RawString(item.rawData);item.source=SourceName(kind,view)+L" / disabled";item.kind=kind;
                 item.registryView=view;item.valueType=type;item.enabled=false;item.canToggle=true;item.disabledBackup=true;
+                item.canDelete=true;
                 items.push_back(std::move(item));}
         }
         RegCloseKey(saved);
@@ -149,11 +171,13 @@ void AddFolderItems(std::vector<StartupItem>& items,StartupKind kind,int folderI
         const std::wstring suffix=L".nlite-disabled";
         const bool disabled=filename.size()>=suffix.size()&&_wcsicmp(filename.c_str()+filename.size()-suffix.size(),suffix.c_str())==0;
         std::wstring displayName=disabled?filename.substr(0,filename.size()-suffix.size()):filename;
+        if(!IsStartupFolderLaunchableFile(displayName))continue;
         const size_t dot=displayName.find_last_of(L'.');if(dot!=std::wstring::npos&&dot>0)displayName.resize(dot);
         StartupItem item;item.name=displayName;item.kind=kind;item.path=folder+L"\\"+filename;
         item.command=disabled?item.path.substr(0,item.path.size()-suffix.size()):item.path;
         item.source=SourceName(kind,0)+(disabled?L" / disabled":L"");item.enabled=!disabled;
         item.canToggle=kind==StartupKind::UserFolder;
+        item.canDelete=kind==StartupKind::UserFolder;
         if(!disabled&&(kind==StartupKind::UserFolder||kind==StartupKind::CommonFolder)){
             item.approvalSubkey=ApprovalSubkey(kind,KEY_WOW64_64KEY);item.approvalName=filename;
             const bool currentUser=kind==StartupKind::UserFolder;
@@ -173,9 +197,7 @@ std::wstring BstrText(BSTR value) {
     return value?std::wstring(value,SysStringLen(value)):std::wstring();
 }
 bool IsMicrosoftTaskPath(const std::wstring& path) {
-    constexpr size_t prefixLength=10;
-    if(path.size()<prefixLength||_wcsnicmp(path.c_str(),L"\\Microsoft",prefixLength)!=0)return false;
-    return path.size()==prefixLength||path[prefixLength]==L'\\';
+    return IsProtectedStartupTaskPath(path);
 }
 bool IsCurrentTaskPrincipal(const std::wstring& principal) {
     if(principal.empty())return false;
@@ -221,9 +243,6 @@ std::wstring TaskCommand(ITaskDefinition* definition) {
 }
 void AddTasksInFolder(ITaskFolder* folder,std::vector<StartupItem>& items,unsigned depth) {
     if(!folder||depth>12)return;
-    BSTR currentFolder=nullptr;folder->get_Path(&currentFolder);
-    const std::wstring currentPath=BstrText(currentFolder);SysFreeString(currentFolder);
-    if(IsMicrosoftTaskPath(currentPath))return;
     IRegisteredTaskCollection* tasks=nullptr;
     if(SUCCEEDED(folder->GetTasks(TASK_ENUM_HIDDEN,&tasks))&&tasks){
         LONG count=0;tasks->get_Count(&count);
@@ -256,8 +275,8 @@ void AddTasksInFolder(ITaskFolder* folder,std::vector<StartupItem>& items,unsign
                             BSTR taskName=nullptr,taskPath=nullptr;task->get_Name(&taskName);task->get_Path(&taskPath);
                             StartupItem item;item.kind=StartupKind::ScheduledTask;
                             item.name=BstrText(taskName);item.taskPath=BstrText(taskPath);
-                            item.source=hasBoot&&hasLogon?L"Task Scheduler / boot and logon":
-                                (hasBoot?L"Task Scheduler / boot":L"Task Scheduler / logon");
+                            item.source=IsMicrosoftTaskPath(item.taskPath)?L"Windows task scheduler / ":L"Task Scheduler / ";
+                            item.source+=hasBoot&&hasLogon?L"boot and sign-in":(hasBoot?L"boot":L"sign-in");
                             item.command=TaskCommand(definition);
                             VARIANT_BOOL enabled=VARIANT_FALSE;task->get_Enabled(&enabled);
                             item.enabled=enabled==VARIANT_TRUE&&hasEnabledStartupTrigger;
@@ -265,8 +284,10 @@ void AddTasksInFolder(ITaskFolder* folder,std::vector<StartupItem>& items,unsign
                             if(SUCCEEDED(definition->get_Principal(&principal))&&principal){
                                 principal->get_UserId(&user);ReleaseCom(principal);
                             }
-                            item.canToggle=onlyStartup&&hasEnabledStartupTrigger&&!IsMicrosoftTaskPath(item.taskPath)&&
-                                IsCurrentTaskPrincipal(BstrText(user));
+                            const bool currentUser=IsCurrentTaskPrincipal(BstrText(user));
+                            const bool protectedTask=IsMicrosoftTaskPath(item.taskPath);
+                            item.canToggle=onlyStartup&&hasEnabledStartupTrigger&&!protectedTask&&currentUser;
+                            item.canDelete=onlyStartup&&StartupEntryCanBeDeleted(currentUser,protectedTask);
                             SysFreeString(taskName);SysFreeString(taskPath);SysFreeString(user);
                             if(!item.taskPath.empty())items.push_back(std::move(item));
                         }
@@ -361,6 +382,30 @@ bool DeleteBackup(const StartupItem& item) {
     RegDeleteValueW(key,L"Type");RegDeleteValueW(key,L"Data");RegCloseKey(key);
     LONG removed=RegDeleteKeyW(HKEY_CURRENT_USER,path.c_str());return removed==ERROR_SUCCESS||removed==ERROR_FILE_NOT_FOUND;
 }
+bool DeleteScheduledTask(const std::wstring& taskPath) {
+    const HRESULT init=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+    const bool uninitialize=SUCCEEDED(init);
+    if(FAILED(init)&&init!=RPC_E_CHANGED_MODE)return false;
+    bool ok=false;ITaskService* service=nullptr;ITaskFolder* folder=nullptr;
+    if(SUCCEEDED(CoCreateInstance(CLSID_TaskScheduler,nullptr,CLSCTX_INPROC_SERVER,
+        IID_ITaskService,reinterpret_cast<void**>(&service)))&&service){
+        VARIANT empty;VariantInit(&empty);
+        if(SUCCEEDED(service->Connect(empty,empty,empty,empty))){
+            const size_t split=taskPath.find_last_of(L'\\');
+            if(split!=std::wstring::npos&&split+1<taskPath.size()){
+                const std::wstring folderName=split==0?L"\\":taskPath.substr(0,split);
+                const std::wstring name=taskPath.substr(split+1);
+                BSTR folderBstr=SysAllocString(folderName.c_str()),nameBstr=SysAllocString(name.c_str());
+                if(folderBstr&&nameBstr&&SUCCEEDED(service->GetFolder(folderBstr,&folder))&&folder)
+                    ok=SUCCEEDED(folder->DeleteTask(nameBstr,0));
+                SysFreeString(folderBstr);SysFreeString(nameBstr);
+            }
+        }
+    }
+    ReleaseCom(folder);ReleaseCom(service);
+    if(uninitialize)CoUninitialize();
+    return ok;
+}
 }
 
 std::vector<StartupItem> EnumerateStartupItems() {
@@ -369,12 +414,19 @@ std::vector<StartupItem> EnumerateStartupItems() {
         AddRunItems(items,HKEY_CURRENT_USER,StartupKind::UserRun,view);AddRunItems(items,HKEY_CURRENT_USER,StartupKind::UserRunOnce,view);
         AddDisabledItems(items,StartupKind::UserRun,view);AddDisabledItems(items,StartupKind::UserRunOnce,view);
         AddRunItems(items,HKEY_LOCAL_MACHINE,StartupKind::MachineRun,view);AddRunItems(items,HKEY_LOCAL_MACHINE,StartupKind::MachineRunOnce,view);
+        AddPolicyRunItems(items,HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run",
+            L"Current user / enforced startup",view,true);
+        AddPolicyRunItems(items,HKEY_LOCAL_MACHINE,L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run",
+            L"All users / enforced startup",view,false);
     }
     AddFolderItems(items,StartupKind::UserFolder,CSIDL_STARTUP);AddFolderItems(items,StartupKind::CommonFolder,CSIDL_COMMON_STARTUP);
     AddWindowsShellItems(items);
     AddScheduledStartupItems(items);
     auto lower=[](std::wstring value){std::transform(value.begin(),value.end(),value.begin(),[](wchar_t c){return static_cast<wchar_t>(std::towlower(c));});return value;};
     std::stable_sort(items.begin(),items.end(),[&](const StartupItem& a,const StartupItem& b){
+        const bool shellA=a.kind==StartupKind::WindowsShell,shellB=b.kind==StartupKind::WindowsShell;
+        if(shellA!=shellB)return StartupEntryPriorityBefore(shellA,shellB);
+        if(a.enabled!=b.enabled)return a.enabled>b.enabled;
         const std::wstring as=lower(a.source),bs=lower(b.source);if(as!=bs)return as<bs;
         const std::wstring an=lower(a.name),bn=lower(b.name);if(an!=bn)return an<bn;return a.enabled>b.enabled;
     });
@@ -425,6 +477,43 @@ bool SetStartupItemEnabled(StartupItem& item,bool enabled) {
     HKEY active=nullptr;if(RegOpenKeyExW(HKEY_CURRENT_USER,activeSubkey.c_str(),0,KEY_SET_VALUE|item.registryView,&active)!=ERROR_SUCCESS){DeleteBackup(item);return false;}
     result=RegDeleteValueW(active,item.name.c_str());RegCloseKey(active);if(result!=ERROR_SUCCESS){DeleteBackup(item);return false;}
     item.enabled=false;item.disabledBackup=true;return true;
+}
+
+bool DeleteStartupItem(StartupItem& item) {
+    if(!item.canDelete)return false;
+    HKEY key=nullptr;
+    if(item.kind==StartupKind::ScheduledTask){
+        if(IsProtectedStartupTaskPath(item.taskPath))return false;
+        return DeleteScheduledTask(item.taskPath);
+    }
+    if(item.kind==StartupKind::UserFolder){
+        const DWORD attributes=GetFileAttributesW(item.path.c_str());
+        if(attributes==INVALID_FILE_ATTRIBUTES||(attributes&FILE_ATTRIBUTE_DIRECTORY))return false;
+        if(!DeleteFileW(item.path.c_str()))return false;
+        if(!item.approvalSubkey.empty()&&!item.approvalName.empty()&&
+            RegOpenKeyExW(HKEY_CURRENT_USER,item.approvalSubkey.c_str(),0,
+                KEY_SET_VALUE|item.registryView,&key)==ERROR_SUCCESS){
+            RegDeleteValueW(key,item.approvalName.c_str());RegCloseKey(key);
+        }
+        item.canDelete=false;item.canToggle=false;return true;
+    }
+    if(!IsUserRegistryStartup(item.kind))return false;
+    if(item.disabledBackup){
+        if(!DeleteBackup(item))return false;
+        item.canDelete=false;item.canToggle=false;return true;
+    }
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,RunSubkey(item.kind),0,
+        KEY_SET_VALUE|item.registryView,&key)!=ERROR_SUCCESS)return false;
+    const LONG removed=RegDeleteValueW(key,item.name.c_str());
+    RegCloseKey(key);
+    if(removed!=ERROR_SUCCESS)return false;
+    if(!item.approvalSubkey.empty()&&!item.approvalName.empty()&&
+        RegOpenKeyExW(HKEY_CURRENT_USER,item.approvalSubkey.c_str(),0,
+            KEY_SET_VALUE|item.registryView,&key)==ERROR_SUCCESS){
+        RegDeleteValueW(key,item.approvalName.c_str());RegCloseKey(key);
+    }
+    DeleteBackup(item);
+    item.canDelete=false;item.canToggle=false;return true;
 }
 
 bool AddStartupApplication(HWND owner,std::wstring& addedName) {

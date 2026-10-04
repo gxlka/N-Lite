@@ -55,7 +55,7 @@ static constexpr WORD IDI_NLITE = 101;
 #define NLITE_VERSION "0.2.5"
 #endif
 #ifndef NLITE_CLEANER_VERSION
-#define NLITE_CLEANER_VERSION "1"
+#define NLITE_CLEANER_VERSION "3"
 #endif
 #define NLITE_WIDEN2(x) L##x
 #define NLITE_WIDEN(x) NLITE_WIDEN2(x)
@@ -72,7 +72,7 @@ static const int ID_SORT_NAME = 20, ID_SORT_PID = 21, ID_SORT_CPU = 22, ID_SORT_
 static const int ID_PURGE = 30, ID_AUTO = 31, ID_THRESHOLD_DOWN = 32, ID_THRESHOLD_UP = 33, ID_THRESHOLD_FIELD = 37;
 static const int ID_INTERVAL_FIELD = 34, ID_ELEVATE = 36, ID_INTERVAL_OPTION = 38, ID_THEME = 46;
 static const int ID_TIMER_TOGGLE = 40, ID_TIMER_MINUS = 41, ID_TIMER_PLUS = 42, ID_AUTOSTART = 43, ID_UPDATE_CHECK_NOW = 44, ID_OPEN_GITHUB = 45;
-static const int ID_STARTUP_ADD = 47, ID_STARTUP_TOGGLE = 48, ID_PROCESS_FILTER = 49;
+static const int ID_STARTUP_ADD = 47, ID_STARTUP_TOGGLE = 48, ID_PROCESS_FILTER = 49, ID_STARTUP_DELETE = 50;
 
 static const int ID_EXIT = 9001, ID_SHOW = 9002, ID_UPDATE = 9003;
 static COLORREF C_BG = RGB(17, 21, 29), C_PANEL = RGB(26, 32, 42), C_PANEL2 = RGB(21, 26, 35);
@@ -97,6 +97,7 @@ struct ProcRow {
 struct Metrics {
     double total = 0, available = 0, free = 0, standby = 0;
     double commit = 0, commitLimit = 0, pagefileUsed = 0, pagefileTotal = 0;
+    bool standbyKnown = false;
 };
 struct Hit {
     RECT r;
@@ -147,6 +148,7 @@ static uint64_t gLastDisplayedManualRequestId = 0;
 static CleanerStatus gCleanerStatus;
 static bool gManualCleanerPending = false;
 static uint64_t gManualStandbyBefore = 0;
+static bool gManualStandbyBeforeKnown = false;
 enum class CleanerNoticeKind : uint8_t { Info, Success, Failure };
 static std::wstring gCleanerNotification;
 static ULONGLONG gCleanerNotificationUntil = 0;
@@ -248,13 +250,26 @@ static void LoadNt() {
     gNtSetTimer = reinterpret_cast<NtSetTimerFn>(GetProcAddress(n, "NtSetTimerResolution"));
 }
 static bool ReadStandby(double& out, double& freeOut) {
-    if (!gNtQuerySys) return false;
-    MemListInfo info{}; ULONG ret = 0;
-    LONG st = gNtQuerySys(kSystemMemoryListInformationClass, &info, sizeof(info), &ret);
-    if (st < 0) return false;
-    out = static_cast<double>(StandbyBytesFromPageCounts(info, gPageSize));
-    freeOut = static_cast<double>(FreeBytesFromPageCount(info, gPageSize));
-    return true;
+    MemListInfo info{};
+    const bool queried = gNtQuerySys && QuerySystemMemoryListInfo(
+        [&](uint32_t informationClass, void* buffer, uint32_t bufferLength, uint32_t* returnLength) {
+            ULONG ret = 0;
+            LONG status = gNtQuerySys(informationClass, buffer, bufferLength, &ret);
+            if (returnLength) *returnLength = ret;
+            return static_cast<int32_t>(status);
+        }, info);
+    if (queried) {
+        out = static_cast<double>(StandbyBytesFromPageCounts(info, gPageSize));
+        freeOut = static_cast<double>(FreeBytesFromPageCount(info, gPageSize));
+        return true;
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (gCleanerStatus.standbyValid && gCleanerStatus.standbyTick <= now &&
+        now - gCleanerStatus.standbyTick <= 120000) {
+        out = static_cast<double>(gCleanerStatus.standbyBytes);
+        return true;
+    }
+    return false;
 }
 static bool IsNtOk(LONG s) { return s >= 0; }
 static BOOL CALLBACK PageFileUsageCallback(PVOID context, PENUM_PAGE_FILE_INFORMATION info, LPCWSTR) {
@@ -277,7 +292,10 @@ static void UpdateMetrics() {
         gMetrics.commit = static_cast<double>(p.CommitTotal) * gPageSize;
         gMetrics.commitLimit = static_cast<double>(p.CommitLimit) * gPageSize;
     }
-    double sb = 0, freePages = 0; if (ReadStandby(sb, freePages)) { gMetrics.standby = sb; gMetrics.free = freePages; }
+    double sb = 0, freePages = gMetrics.free;
+    gMetrics.standbyKnown = ReadStandby(sb, freePages);
+    gMetrics.standby = gMetrics.standbyKnown ? sb : 0;
+    if (gMetrics.standbyKnown) gMetrics.free = freePages;
     double pagefilePages[2]={0,0};
     if(EnumPageFilesW(PageFileUsageCallback,pagefilePages)){
         gMetrics.pagefileUsed=pagefilePages[0]*gPageSize;
@@ -591,10 +609,8 @@ static DWORD CurrentCleanerVersionNumber() {
 }
 static void BlockCleanerSetup() {
     gCleanerSetupBlocked = true;
-    if (gCleanerInstalled && !gCleanerCurrentVersion) {
-        const DWORD version = CurrentCleanerVersionNumber();
-        if (version) RegWriteDword(L"CleanerSetupBlockedVersion", version);
-    }
+    const DWORD version = CurrentCleanerVersionNumber();
+    if (version) RegWriteDword(L"CleanerSetupBlockedVersion", version);
 }
 static void SaveSettings() {
     RegWriteDword(L"AutoPurge",gAutoPurge?1:0); RegWriteDword(L"ThresholdMB",gThresholdMB); RegWriteDword(L"IntervalSec",gIntervalSec);
@@ -603,6 +619,13 @@ static void SaveSettings() {
     RegWriteDword(L"ShowAllProcesses",gShowAllProcesses?1:0);
     if (!gUserSid.empty()) RegWriteString(L"CleanerSid", gUserSid);
     WriteCleanerSettings();
+}
+static void DisableAutoCleanAfterSetupFailure(bool showNotice) {
+    if (!gAutoPurge) return;
+    gAutoPurge = false;
+    SaveSettings();
+    if (showNotice) ShowCleanerNotification(
+        L"Auto clean is off. Press Clean now to retry cleaner setup.", CleanerNoticeKind::Failure);
 }
 static void LoadSettings() {
     DWORD v=0; RegReadDword(L"AutoPurge",v); gAutoPurge=v!=0;
@@ -808,6 +831,7 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
         BlockCleanerSetup();
         gCleanerSetupForAuto=false;gCleanerSetupForManual=false;
         gStatus = L"Ready";
+        if (forAuto && !gCleanerInstalled) DisableAutoCleanAfterSetupFailure(!forManual);
         if (forManual) ShowCleanerNotification(L"Clean failed: Windows account unavailable", CleanerNoticeKind::Failure);
         return false;
     }
@@ -824,6 +848,7 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
                 L"Auto Clean is using the existing cleaner; the update file is missing.";
             return started;
         }
+        if (forAuto && !gCleanerInstalled) DisableAutoCleanAfterSetupFailure(!forManual);
         if (forManual && !gCleanerInstalled) ShowCleanerNotification(L"Clean failed: cleaner could not start", CleanerNoticeKind::Failure);
         return false;
     }
@@ -850,6 +875,7 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
                 L"Auto Clean is using the existing cleaner; the update was skipped.";
             return started;
         }
+        if (forAuto && !gCleanerInstalled) DisableAutoCleanAfterSetupFailure(!forManual);
         if (forManual && !gCleanerInstalled) ShowCleanerNotification(
             error == ERROR_CANCELLED ? L"Clean failed: request was cancelled" : L"Clean failed: cleaner could not start",
             CleanerNoticeKind::Failure);
@@ -907,6 +933,7 @@ static void PollCleanerSetup() {
             if (forManual) fallbackStarted = RequestCleanerTaskRun(true);
             else if (gAutoPurge) fallbackStarted = RequestCleanerTaskRun(false);
         }
+        else if (forAuto) DisableAutoCleanAfterSetupFailure(!forManual);
         gStatus = L"Ready";
         if (forManual && !fallbackStarted)
             ShowCleanerNotification(L"Clean failed: Windows could not start the cleaner", CleanerNoticeKind::Failure);
@@ -922,6 +949,7 @@ static void PollCleanerStatus() {
     if (!gCleanerInstalled) return;
     CleanerStatus latest;
     if (!ReadCleanerStatus(latest)) return;
+    gCleanerStatus = latest;
     if (latest.completedManualRequestId > gLastDisplayedManualRequestId &&
         latest.completedManualRequestId >= gCleanerRequestId) {
         gLastDisplayedManualRequestId = latest.completedManualRequestId;
@@ -930,23 +958,30 @@ static void PollCleanerStatus() {
             UpdateMetrics();
             gPurgeLatched = true;
             gLastPurge = GetTickCount64();
-            const uint64_t after = static_cast<uint64_t>(gMetrics.standby);
             const int32_t status = static_cast<int32_t>(latest.lastManualStatus);
-            if (StandbyCleanSucceeded(status, gManualStandbyBefore, after, gPageSize)) {
-                const uint64_t released = gManualStandbyBefore - after;
+            const bool sizesKnown = latest.manualStandbyValid ||
+                (gManualStandbyBeforeKnown && gMetrics.standbyKnown);
+            const uint64_t before = latest.manualStandbyValid ? latest.manualStandbyBefore : gManualStandbyBefore;
+            const uint64_t after = latest.manualStandbyValid ? latest.manualStandbyAfter :
+                static_cast<uint64_t>(gMetrics.standby);
+            if (sizesKnown && StandbyCleanSucceeded(status, before, after, gPageSize)) {
+                const uint64_t released = before - after;
                 ShowCleanerNotification(L"Clean succeeded: " + Bytes(static_cast<double>(released)) + L" freed",
                     CleanerNoticeKind::Success);
             } else if (status >= 0) {
-                ShowCleanerNotification(L"Clean failed: standby size unchanged", CleanerNoticeKind::Failure);
+                ShowCleanerNotification(sizesKnown ? L"Clean failed: standby size unchanged" :
+                    L"Clean could not be verified: standby size unavailable", CleanerNoticeKind::Failure);
             } else {
                 ShowCleanerNotification(L"Clean failed: Windows rejected the request", CleanerNoticeKind::Failure);
             }
             gManualStandbyBefore = 0;
+            gManualStandbyBeforeKnown = false;
             gPurgeLatched = true;
             gLastPurge = GetTickCount64();
             gStatus = L"Ready";
         } else {
             gManualStandbyBefore = 0;
+            gManualStandbyBeforeKnown = false;
             ShowCleanerNotification(L"Clean failed: Windows rejected the request", CleanerNoticeKind::Failure);
             gStatus = L"Ready";
         }
@@ -956,7 +991,6 @@ static void PollCleanerStatus() {
         gStatus = IsNtOk(static_cast<LONG>(latest.lastAutoStatus)) ?
             L"Automatic standby cleaning finished." : L"Automatic standby cleaning was denied by Windows.";
     }
-    gCleanerStatus = latest;
 }
 static void DoPurge() {
     if (gManualCleanerPending) {
@@ -964,11 +998,12 @@ static void DoPurge() {
         return;
     }
     UpdateMetrics();
-    if (gMetrics.standby < static_cast<double>(gPageSize)) {
+    if (gMetrics.standbyKnown && gMetrics.standby < static_cast<double>(gPageSize)) {
         ShowCleanerNotification(L"Standby list is already empty", CleanerNoticeKind::Info);
         return;
     }
     gManualStandbyBefore = static_cast<uint64_t>(gMetrics.standby);
+    gManualStandbyBeforeKnown = gMetrics.standbyKnown;
     if (!gCleanerInstalled) {
         StartCleanerSetup(false, true);
         return;
@@ -1297,6 +1332,19 @@ static void DrawSwitch(HDC dc,RECT r,bool enabled,int id,DWORD data=0) {
     Round(dc,R(x,r.top+3,d,d),RGB(250,251,255),RGB(250,251,255),d/2);
     AddHit(r,id,data);
 }
+static void DrawStartupDelete(HDC dc,RECT r,bool enabled,DWORD data) {
+    Round(dc,r,enabled?C_PANEL2:C_ROW,enabled?C_LINE:C_ROW,8);
+    const COLORREF ink=enabled?C_RED:C_MUTED;
+    const int cx=(r.left+r.right)/2,top=r.top+8;
+    Line(dc,cx-7,top+3,cx+7,top+3,ink,2);
+    Line(dc,cx-4,top,cx+4,top,ink,2);
+    Line(dc,cx-5,top+5,cx-4,top+17,ink,2);
+    Line(dc,cx+5,top+5,cx+4,top+17,ink,2);
+    Line(dc,cx-4,top+17,cx+4,top+17,ink,2);
+    Line(dc,cx-1,top+7,cx-1,top+14,ink,1);
+    Line(dc,cx+2,top+7,cx+2,top+14,ink,1);
+    if(enabled)AddHit(r,ID_STARTUP_DELETE,data);
+}
 static std::wstring IntervalLabel(unsigned seconds) {
     if(seconds<60)return std::to_wstring(seconds)+L" seconds";
     unsigned minutes=seconds/60;
@@ -1341,7 +1389,8 @@ static void DrawMemory(HDC dc, int cw, int ch) {
     Round(dc,R(barX,memory.top+145,7,7),C_ACCENT,C_ACCENT,4);
     Txt(dc,L"In use  "+Bytes(used),barX+13,memory.top+139,140,20,C_MUTED,gFontSmall);
     Round(dc,R(barX+151,memory.top+145,7,7),C_AMBER,C_AMBER,4);
-    Txt(dc,L"Standby  "+Bytes(gMetrics.standby),barX+164,memory.top+139,160,20,C_MUTED,gFontSmall);
+    Txt(dc,L"Standby  "+(gMetrics.standbyKnown?Bytes(gMetrics.standby):L"Unavailable"),
+        barX+164,memory.top+139,160,20,C_MUTED,gFontSmall);
     Round(dc,R(barX+322,memory.top+145,7,7),C_GREEN,C_GREEN,4);
     Txt(dc,L"Free  "+Bytes(gMetrics.free),barX+335,memory.top+139,W(memory)-2*pad-335,20,C_MUTED,gFontSmall);
     Line(dc,memory.left+pad,memory.top+174,memory.right-pad,memory.top+174,C_LINE);
@@ -1424,7 +1473,7 @@ static void DrawStartup(HDC dc,int cw,int ch) {
     RECT list=R(content.left,187,W(content),ch-225);Card(dc,list);
     Txt(dc,L"Startup apps",list.left+17,list.top+11,W(list)-34,20,C_TEXT,gFontMed);
     Line(dc,list.left+13,list.top+37,list.right-13,list.top+37,C_LINE);
-    const int rowTop=list.top+43,rowH=49,footerY=list.bottom-26;
+    const int rowTop=list.top+43,rowH=60,footerY=list.bottom-26;
     const int visibleRows=(std::max)(1,(footerY-rowTop)/rowH);
     gStartupScroll=(std::max)(0,(std::min)(gStartupScroll,(std::max)(0,static_cast<int>(gStartupEntries.size())-visibleRows)));
     if(gStartupEntries.empty()){
@@ -1434,23 +1483,35 @@ static void DrawStartup(HDC dc,int cw,int ch) {
         for(int row=0;row<visibleRows;++row){
             const int index=gStartupScroll+row;if(index>=static_cast<int>(gStartupEntries.size()))break;
             const StartupItem& item=gStartupEntries[static_cast<size_t>(index)];const int y=rowTop+row*rowH;
-            RECT rr=R(list.left+9,y,W(list)-18,rowH-2);
+            RECT rr=R(list.left+9,y,W(list)-27,rowH-2);
             if(row%2)Round(dc,rr,C_ROW,C_ROW,7);
             if(item.canToggle)AddHit(rr,ID_STARTUP_TOGGLE,static_cast<DWORD>(index));
-            const int controlW=item.canToggle?56:89;
-            Txt(dc,item.name,rr.left+10,rr.top+4,W(rr)-controlW-22,19,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
-            Txt(dc,item.source+L"  |  "+item.command,rr.left+10,rr.top+24,W(rr)-controlW-22,17,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
-            if(item.canToggle)DrawSwitch(dc,R(rr.right-53,rr.top+9,42,25),item.enabled,ID_STARTUP_TOGGLE,static_cast<DWORD>(index));
+            const int actionWidth=93;
+            Txt(dc,item.name,rr.left+12,rr.top+6,W(rr)-actionWidth-20,21,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+            Txt(dc,item.source+L"  ·  "+item.command,rr.left+12,rr.top+31,W(rr)-actionWidth-20,17,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+            if(item.canToggle)DrawSwitch(dc,R(rr.right-91,rr.top+15,52,29),item.enabled,ID_STARTUP_TOGGLE,static_cast<DWORD>(index));
             else {
-                const wchar_t* label=item.kind==StartupKind::WindowsShell?L"Windows":
-                    item.kind==StartupKind::ScheduledTask?L"Read only":L"All users";
-                Txt(dc,label,rr.right-83,rr.top+9,76,23,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+                const wchar_t* label=item.kind==StartupKind::WindowsShell||IsProtectedStartupTaskPath(item.taskPath)?L"Windows":
+                    item.kind==StartupKind::ScheduledTask?L"Managed":
+                    (item.enabled?L"All users":L"Disabled");
+                Txt(dc,label,rr.right-98,rr.top+15,60,29,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
             }
+            DrawStartupDelete(dc,R(rr.right-34,rr.top+13,30,33),item.canDelete,static_cast<DWORD>(index));
         }
+    }
+    if(static_cast<int>(gStartupEntries.size())>visibleRows){
+        RECT track=R(list.right-9,rowTop,3,footerY-rowTop);
+        Fill(dc,track,C_TRACK);
+        const int thumbH=(std::max)(24,H(track)*visibleRows/static_cast<int>(gStartupEntries.size()));
+        const int maxScroll=static_cast<int>(gStartupEntries.size())-visibleRows;
+        const int thumbY=track.top+(H(track)-thumbH)*gStartupScroll/maxScroll;
+        Round(dc,R(track.left-2,thumbY,7,thumbH),C_ACCENT,C_ACCENT,4);
     }
     Line(dc,list.left+13,footerY-4,list.right-13,footerY-4,C_LINE);
     const std::wstring footerStatus=gStatus==L"Ready"?L"Read-only entries are protected Windows or all-users startup items.":gStatus;
-    Txt(dc,std::to_wstring(gStartupEntries.size())+L" items  |  "+footerStatus,list.left+17,footerY,list.right-list.left-34,18,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+    const size_t enabledCount=static_cast<size_t>(std::count_if(gStartupEntries.begin(),gStartupEntries.end(),[](const StartupItem& item){return item.enabled;}));
+    Txt(dc,std::to_wstring(enabledCount)+L" active  ·  "+std::to_wstring(gStartupEntries.size()-enabledCount)+L" disabled  |  "+footerStatus,
+        list.left+17,footerY,list.right-list.left-34,18,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
 }
 static void DrawSettings(HDC dc,int cw) {
     RECT content=MainContent(cw);DrawPageTitle(dc,content,L"Settings",L"Startup, update, and app preferences.");
@@ -1601,9 +1662,10 @@ static void SaveToggleAuto() {
     if(gAutoPurge){gAutoPurge=kAutoCleanDefaultEnabled;SaveSettings();gStatus=L"Ready";return;}
     gAutoPurge=true;
     SaveSettings();
-    if(!gCleanerInstalled)gCleanerSetupBlocked=false;
     if(CanUseRegisteredCleanerTask(gCleanerInstalled,gCleanerCurrentVersion,gCleanerSetupBlocked))
         RequestCleanerTaskRun(false);
+    else if(ShouldBlockCleanerSetupRetry(gCleanerSetupBlocked,false))
+        DisableAutoCleanAfterSetupFailure(true);
     else StartCleanerSetup(true,false);
 }
 static void HandleClick(int x,int y,bool dbl) {
@@ -1658,6 +1720,13 @@ static void HandleClick(int x,int y,bool dbl) {
             if(ok&&ownStartup)gAutoStart=next;
             if(ok){gStatus=next?L"Startup app enabled.":L"Startup app disabled.";RefreshStartupEntries();}
             else gStatus=L"Could not change that startup item.";
+        }
+    }
+    else if(id==ID_STARTUP_DELETE){
+        const size_t index=target->data;
+        if(index<gStartupEntries.size()){
+            if(DeleteStartupItem(gStartupEntries[index])){gStatus=L"Startup entry deleted.";RefreshStartupEntries();}
+            else gStatus=L"Could not delete that startup entry.";
         }
     }
     else if(id==ID_TIMER_TOGGLE){
@@ -1765,7 +1834,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
             if(gPage==1&&it->id==ID_PROCESS_FILTER)hand=true;
             if(gPage==1&&it->id>=ID_SORT_NAME&&it->id<=ID_SORT_PRIVATE)hand=true;
             if(it->id==ID_INTERVAL_FIELD||it->id==ID_INTERVAL_OPTION)hand=true;
-            if(gPage==2&&(it->id==ID_STARTUP_ADD||it->id==ID_STARTUP_TOGGLE||it->id==ID_REFRESH))hand=true;
+            if(gPage==2&&(it->id==ID_STARTUP_ADD||it->id==ID_STARTUP_TOGGLE||it->id==ID_STARTUP_DELETE||it->id==ID_REFRESH))hand=true;
             if(it->id==ID_INTERVAL_OPTION)for(int i=0;i<static_cast<int>(sizeof(choices)/sizeof(choices[0]));++i)if(choices[i]==it->data)intervalHover=i;
             break;
         }

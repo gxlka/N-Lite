@@ -78,6 +78,52 @@ int main() {
         state == StartupApprovalState::Enabled && bytes.size() == sizeof(initial) && bytes[4] == 10 && bytes[11] == 17,
         "startup_enable_preserves_approval_timestamp");
 
+    const wchar_t* runPath=L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    const wchar_t* deleteValue=L"N-Lite-Startup-DeleteTest";
+    const wchar_t* approvalPath=L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+    HKEY runKey=nullptr;
+    LONG runResult=RegCreateKeyExW(HKEY_CURRENT_USER,runPath,0,nullptr,0,
+        KEY_SET_VALUE|KEY_QUERY_VALUE|KEY_WOW64_64KEY,nullptr,&runKey,nullptr);
+    const wchar_t testCommand[]=L"test startup command";
+    if(runResult==ERROR_SUCCESS){
+        RegDeleteValueW(runKey,deleteValue);
+        runResult=RegSetValueExW(runKey,deleteValue,0,REG_SZ,
+            reinterpret_cast<const BYTE*>(testCommand),sizeof(testCommand));
+        RegCloseKey(runKey);
+    }
+    HKEY approvalKey=nullptr;
+    LONG approvalResult=RegCreateKeyExW(HKEY_CURRENT_USER,approvalPath,0,nullptr,0,
+        KEY_SET_VALUE|KEY_QUERY_VALUE|KEY_WOW64_64KEY,nullptr,&approvalKey,nullptr);
+    if(approvalResult==ERROR_SUCCESS){
+        RegSetValueExW(approvalKey,deleteValue,0,REG_BINARY,initial,sizeof(initial));
+        RegCloseKey(approvalKey);
+    }
+    StartupItem removable;
+    removable.kind=StartupKind::UserRun;removable.name=deleteValue;
+    removable.approvalName=deleteValue;removable.approvalSubkey=approvalPath;
+    removable.registryView=KEY_WOW64_64KEY;removable.canDelete=true;
+    ok &= Check(runResult==ERROR_SUCCESS&&approvalResult==ERROR_SUCCESS&&DeleteStartupItem(removable),
+        "startup_bin_deletes_only_the_user_run_entry");
+    runKey=nullptr;approvalKey=nullptr;
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,runPath,0,KEY_QUERY_VALUE|KEY_WOW64_64KEY,&runKey)==ERROR_SUCCESS){
+        DWORD remainsSize=0;
+        const LONG remains=RegQueryValueExW(runKey,deleteValue,nullptr,nullptr,nullptr,&remainsSize);
+        RegCloseKey(runKey);
+        ok &= Check(remains==ERROR_FILE_NOT_FOUND,"startup_bin_removes_the_run_value");
+    }else ok &= Check(false,"startup_bin_removes_the_run_value");
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,approvalPath,0,KEY_QUERY_VALUE|KEY_WOW64_64KEY,&approvalKey)==ERROR_SUCCESS){
+        DWORD remainsSize=0;
+        const LONG remains=RegQueryValueExW(approvalKey,deleteValue,nullptr,nullptr,nullptr,&remainsSize);
+        RegCloseKey(approvalKey);
+        ok &= Check(remains==ERROR_FILE_NOT_FOUND,"startup_bin_cleans_matching_approval_state");
+    }else ok &= Check(false,"startup_bin_cleans_matching_approval_state");
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,runPath,0,KEY_SET_VALUE|KEY_WOW64_64KEY,&runKey)==ERROR_SUCCESS){
+        RegDeleteValueW(runKey,deleteValue);RegCloseKey(runKey);
+    }
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,approvalPath,0,KEY_SET_VALUE|KEY_WOW64_64KEY,&approvalKey)==ERROR_SUCCESS){
+        RegDeleteValueW(approvalKey,deleteValue);RegCloseKey(approvalKey);
+    }
+
     RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\N-Lite\\StartupTests");
     return ok ? 0 : 1;
 }
