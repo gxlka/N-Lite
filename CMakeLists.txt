@@ -1,17 +1,17 @@
 cmake_minimum_required(VERSION 3.20)
 project(NLite LANGUAGES CXX RC)
 
-set(NLITE_VERSION "0.2.4" CACHE STRING "N-Lite application version")
+set(NLITE_VERSION "0.2.5" CACHE STRING "N-Lite application version")
 set(NLITE_CLEANER_VERSION "1" CACHE STRING "Protected cleaner helper version")
 
-add_executable(N-Lite WIN32 src/main.cpp)
+add_executable(N-Lite WIN32 src/main.cpp src/startup_manager.cpp)
 set(NLITE_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/src/app.ico")
 file(TO_CMAKE_PATH "${NLITE_APP_ICON}" NLITE_APP_ICON_RC)
 configure_file(src/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app_resources.rc" @ONLY)
 target_sources(N-Lite PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app_resources.rc")
 target_compile_features(N-Lite PRIVATE cxx_std_17)
 target_compile_definitions(N-Lite PRIVATE UNICODE _UNICODE NLITE_VERSION="${NLITE_VERSION}" NLITE_CLEANER_VERSION="${NLITE_CLEANER_VERSION}")
-target_link_libraries(N-Lite PRIVATE psapi shell32 advapi32 comctl32 winmm dwmapi shlwapi winhttp)
+target_link_libraries(N-Lite PRIVATE psapi shell32 advapi32 comctl32 comdlg32 winmm dwmapi shlwapi winhttp)
 set_property(TARGET N-Lite PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 if(MSVC)

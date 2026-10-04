@@ -2,6 +2,8 @@
 #include "process_grouping.h"
 #include "ui_layout.h"
 #include "ui_theme.h"
+#include "timer_slider.h"
+#include "startup_policy.h"
 
 #include <iostream>
 #include <string>
@@ -26,6 +28,34 @@ bool Inside(UiRect rect, int width, int height) {
 }
 
 int main() {
+    Check(TimerResolutionFromX(0, 100, 100, 5100, 156250) == 5100,
+        "timer_slider_left_edge_preserves_exact_windows_minimum");
+    Check(TimerResolutionFromX(200, 100, 100, 5100, 156250) == 156250,
+        "timer_slider_right_edge_preserves_exact_windows_maximum");
+    const uint32_t sliderMiddle = TimerResolutionFromX(150, 100, 100, 5100, 156250);
+    Check(sliderMiddle >= 5100 && sliderMiddle <= 156250,
+        "timer_slider_intermediate_value_stays_in_windows_range");
+    Check((sliderMiddle - 5100) % 1000 == 0,
+        "timer_slider_uses_consistent_tenth_millisecond_steps_from_non_aligned_minimum");
+    Check(TimerResolutionFromX(90, 100, 100, 5100, 156250) == 5100 &&
+        TimerResolutionFromX(210, 100, 100, 5100, 156250) == 156250,
+        "timer_slider_clamps_drag_outside_track");
+    Check(TimerResolutionFromX(125, 100, 100, 5100, 156250) <=
+        TimerResolutionFromX(175, 100, 100, 5100, 156250),
+        "timer_slider_moves_monotonically");
+    bool sliderIsMonotonic = true;
+    uint32_t previousSliderValue = 0;
+    for (int x = 100; x <= 200; ++x) {
+        const uint32_t value = TimerResolutionFromX(x, 100, 100, 5100, 156250);
+        if (x > 100 && value < previousSliderValue) sliderIsMonotonic = false;
+        previousSliderValue = value;
+    }
+    Check(sliderIsMonotonic, "timer_slider_is_monotonic_across_entire_track");
+    Check(StartupValueNameForPath(L"C:\\Tools\\Photo Editor.exe", {}) == L"Photo Editor",
+        "startup_app_name_uses_executable_stem");
+    Check(StartupValueNameForPath(L"C:\\Other\\photo editor.EXE", {L"photo editor"}) == L"photo editor (2)",
+        "startup_app_name_avoids_case_insensitive_registry_collision");
+
     Check(IsValidCleanerSid(L"S-1-5-21-100-200-300-1001"), "valid_user_sid_is_accepted");
     Check(!IsValidCleanerSid(L"S-1-5-21-100-200-300-1001\\.."), "sid_path_injection_is_rejected");
     Check(!IsValidCleanerSid(L"S-1-5-21-100-200-300-"), "sid_trailing_separator_is_rejected");

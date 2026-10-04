@@ -6,6 +6,8 @@
 #include <psapi.h>
 #include <shellapi.h>
 #include <commctrl.h>
+#include <commdlg.h>
+#include <shlobj.h>
 #include <mmsystem.h>
 #include <dwmapi.h>
 #include <shlwapi.h>
@@ -33,6 +35,9 @@
 #include "process_grouping.h"
 #include "ui_layout.h"
 #include "ui_theme.h"
+#include "timer_slider.h"
+#include "startup_policy.h"
+#include "startup_manager.h"
 
 static constexpr WORD IDI_NLITE = 101;
 
@@ -43,9 +48,10 @@ static constexpr WORD IDI_NLITE = 101;
 #pragma comment(lib, "winmm.lib")
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "comdlg32.lib")
 
 #ifndef NLITE_VERSION
-#define NLITE_VERSION "0.2.4"
+#define NLITE_VERSION "0.2.5"
 #endif
 #ifndef NLITE_CLEANER_VERSION
 #define NLITE_CLEANER_VERSION "1"
@@ -65,6 +71,7 @@ static const int ID_SORT_NAME = 20, ID_SORT_PID = 21, ID_SORT_CPU = 22, ID_SORT_
 static const int ID_PURGE = 30, ID_AUTO = 31, ID_THRESHOLD_DOWN = 32, ID_THRESHOLD_UP = 33, ID_THRESHOLD_FIELD = 37;
 static const int ID_INTERVAL_FIELD = 34, ID_ELEVATE = 36, ID_INTERVAL_OPTION = 38, ID_THEME = 46;
 static const int ID_TIMER_TOGGLE = 40, ID_TIMER_MINUS = 41, ID_TIMER_PLUS = 42, ID_AUTOSTART = 43, ID_UPDATE_CHECK_NOW = 44, ID_OPEN_GITHUB = 45;
+static const int ID_STARTUP_ADD = 47, ID_STARTUP_TOGGLE = 48;
 
 static const int ID_EXIT = 9001, ID_SHOW = 9002, ID_UPDATE = 9003;
 static COLORREF C_BG = RGB(17, 21, 29), C_PANEL = RGB(26, 32, 42), C_PANEL2 = RGB(21, 26, 35);
@@ -103,12 +110,18 @@ static HWND gWnd = nullptr;
 static HICON gIcon = nullptr;
 static HFONT gFont = nullptr, gFontSmall = nullptr, gFontMed = nullptr, gFontBold = nullptr, gFontTitle = nullptr;
 static std::vector<Hit> gHits;
+static std::vector<StartupItem> gStartupEntries;
 static std::vector<ProcRow> gProcs, gVisible;
 static std::unordered_map<DWORD, uint64_t> gCpuPrevious;
 static std::unordered_map<std::wstring, bool> gExpanded;
 static Metrics gMetrics;
 static int gPage = 0, gScroll = 0, gNavHover = -1, gIntervalHover = -1;
 static bool gIntervalOpen = false;
+static bool gTimerDragging = false;
+static ULONG gTimerDragOriginal = 0;
+static RECT gTimerSliderHit{};
+static int gStartupScroll = 0;
+static DWORD gStartupLastRefresh = 0;
 static int gSortColumn = 0;
 static bool gSortDescending = false;
 static DWORD gSelectedPid = 0;
@@ -566,7 +579,7 @@ static std::wstring TimerText(ULONG units) {
 }
 static bool SetAutoStart(bool on) {
     HKEY k; const wchar_t* sub = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, sub, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &k, nullptr) != ERROR_SUCCESS) return false;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, sub, 0, nullptr, 0, KEY_SET_VALUE|KEY_WOW64_64KEY, nullptr, &k, nullptr) != ERROR_SUCCESS) return false;
     bool ok = false;
     if (on) {
         std::wstring cmd = L"\"" + gExePath + L"\" --startup";
@@ -575,7 +588,7 @@ static bool SetAutoStart(bool on) {
     RegCloseKey(k); return ok;
 }
 static bool ReadAutoStart() {
-    HKEY k; if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_QUERY_VALUE, &k) != ERROR_SUCCESS) return false;
+    HKEY k; if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_QUERY_VALUE|KEY_WOW64_64KEY, &k) != ERROR_SUCCESS) return false;
     DWORD type = 0, cb = 0; LONG r = RegQueryValueExW(k, L"N-Lite", nullptr, &type, nullptr, &cb); RegCloseKey(k);
     return r == ERROR_SUCCESS && type == REG_SZ;
 }
@@ -625,6 +638,17 @@ static void SetTimerRequest(bool on) {
     } else if(!on && gTimerActive){
         ULONG current=0; if(gNtSetTimer)gNtSetTimer(gTimerApplied,FALSE,&current); gTimerActive=false;gTimerNeed=false;
     }
+}
+static void UpdateTimerSlider(int x) {
+    if(W(gTimerSliderHit)<=0)return;
+    gTimerResolution=TimerResolutionFromX(x,gTimerSliderHit.left,W(gTimerSliderHit),
+        gTimerMinResolution,gTimerMaxResolution,1000);
+}
+static void CommitTimerSlider() {
+    if(gTimerEnabled){SetTimerRequest(false);SetTimerRequest(true);}
+    SaveSettings();
+    if(gTimerEnabled&&!gTimerActive)gStatus=L"Windows rejected the selected timer resolution.";
+    else gStatus=L"Timer resolution saved.";
 }
 static std::wstring QuoteWindowsArg(const std::wstring& arg) {
     std::wstring out=L"\"";size_t slashes=0;
@@ -1132,11 +1156,11 @@ static void DrawProcesses(HDC dc, int cw, int ch) {
     Txt(dc,std::to_wstring(gVisible.size())+L" processes",tableX+18,table.bottom-25,150,19,C_MUTED,gFontSmall);
     Txt(dc,L"Right-click for actions  ·  Expand groups with the chevron or double-click",tableX+170,table.bottom-25,tableW-190,19,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
 }
-static void DrawSwitch(HDC dc,RECT r,bool enabled,int id) {
+static void DrawSwitch(HDC dc,RECT r,bool enabled,int id,DWORD data=0) {
     Round(dc,r,enabled?C_ACCENT:C_TRACK,enabled?C_ACCENT:C_LINE,H(r)/2);
     int d=H(r)-6,x=enabled?r.right-d-3:r.left+3;
     Round(dc,R(x,r.top+3,d,d),RGB(250,251,255),RGB(250,251,255),d/2);
-    AddHit(r,id);
+    AddHit(r,id,data);
 }
 static std::wstring IntervalLabel(unsigned seconds) {
     if(seconds<60)return std::to_wstring(seconds)+L" seconds";
@@ -1231,12 +1255,15 @@ static void DrawMemory(HDC dc, int cw, int ch) {
     Txt(dc,L"Released when N-Lite exits.",timer.left+18,timer.top+38,205,17,C_MUTED,gFontSmall);
     const int sx=timer.left+232,sw=(std::max)(120,W(timer)-385),sy=timer.top+37;
     Fill(dc,R(sx,sy-2,sw,4),C_TRACK);
-    double span=static_cast<double>(gTimerMaxResolution-gTimerMinResolution);
-    double ratio=span?static_cast<double>(gTimerResolution-gTimerMinResolution)/span:0.0;
+    gTimerSliderHit=R(sx,sy-15,sw,31);
+    const double span=static_cast<double>(gTimerMaxResolution-gTimerMinResolution);
+    const double bounded=static_cast<double>((std::max)(gTimerMinResolution,(std::min)(gTimerResolution,gTimerMaxResolution)));
+    double ratio=span?static_cast<double>(bounded-gTimerMinResolution)/span:0.0;
+    ratio=(std::max)(0.0,(std::min)(1.0,ratio));
     int knobX=sx+static_cast<int>(ratio*sw);
     Fill(dc,R(sx,sy-2,(std::max)(0,knobX-sx),4),C_ACCENT);
     Round(dc,R(knobX-7,sy-8,14,16),gTimerEnabled?C_ACCENT:C_MUTED,gTimerEnabled?C_ACCENT:C_MUTED,8);
-    AddHit(R(sx,sy-15,sw,31),ID_TIMER_PLUS);
+    AddHit(gTimerSliderHit,ID_TIMER_PLUS);
     Txt(dc,TimerText(gTimerResolution),timer.right-138,timer.top+16,81,39,C_TEXT,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
     DrawSwitch(dc,R(timer.right-48,timer.top+23,32,26),gTimerEnabled,ID_TIMER_TOGGLE);
 
@@ -1256,17 +1283,39 @@ static void DrawMemory(HDC dc, int cw, int ch) {
     }
 }
 static void DrawProcesses(HDC dc, int cw, int ch);
-static void DrawStartup(HDC dc,int cw) {
-    RECT content=MainContent(cw);DrawPageTitle(dc,content,L"Startup",L"Choose whether N-Lite starts with Windows.");
-    RECT card=R(content.left,151,W(content),116);Card(dc,card);
-    Txt(dc,L"Start N-Lite when I sign in",card.left+20,card.top+20,W(card)-115,25,C_TEXT,gFontMed);
-    Txt(dc,L"Launch quietly in the notification area and keep your saved memory and timer settings active.",card.left+20,card.top+51,W(card)-125,36,C_MUTED,gFontSmall,DT_LEFT|DT_TOP|DT_WORDBREAK);
-    DrawSwitch(dc,R(card.right-71,card.top+25,48,27),gAutoStart,ID_AUTOSTART);
-    RECT note=R(content.left,282,W(content),70);
-    Txt(dc,gAutoStart?L"N-Lite is set to start for your Windows account.":L"N-Lite will only start when you open it.",note.left+4,note.top,W(note),24,gAutoStart?C_GREEN:C_MUTED,gFont);
+static void DrawStartup(HDC dc,int cw,int ch) {
+    RECT content=MainContent(cw);DrawPageTitle(dc,content,L"Startup",L"Manage apps that launch when you sign in.");
+    DrawButton(dc,R(content.right-218,142,100,35),L"Refresh",ID_REFRESH,C_PANEL2,C_TEXT);
+    DrawButton(dc,R(content.right-110,142,110,35),L"Add app",ID_STARTUP_ADD,C_ACCENT,RGB(255,255,255),true);
+    RECT list=R(content.left,187,W(content),ch-225);Card(dc,list);
+    Txt(dc,L"Startup apps",list.left+17,list.top+11,W(list)-34,20,C_TEXT,gFontMed);
+    Line(dc,list.left+13,list.top+37,list.right-13,list.top+37,C_LINE);
+    const int rowTop=list.top+43,rowH=49,footerY=list.bottom-26;
+    const int visibleRows=(std::max)(1,(footerY-rowTop)/rowH);
+    gStartupScroll=(std::max)(0,(std::min)(gStartupScroll,(std::max)(0,static_cast<int>(gStartupEntries.size())-visibleRows)));
+    if(gStartupEntries.empty()){
+        Txt(dc,L"No startup apps were found.",list.left+18,rowTop+17,W(list)-36,24,C_MUTED,gFont);
+        Txt(dc,L"Add an app to launch it for your Windows account.",list.left+18,rowTop+43,W(list)-36,20,C_MUTED,gFontSmall);
+    }else{
+        for(int row=0;row<visibleRows;++row){
+            const int index=gStartupScroll+row;if(index>=static_cast<int>(gStartupEntries.size()))break;
+            const StartupItem& item=gStartupEntries[static_cast<size_t>(index)];const int y=rowTop+row*rowH;
+            RECT rr=R(list.left+9,y,W(list)-18,rowH-2);
+            if(row%2)Round(dc,rr,C_ROW,C_ROW,7);
+            if(item.canToggle)AddHit(rr,ID_STARTUP_TOGGLE,static_cast<DWORD>(index));
+            const int controlW=item.canToggle?56:89;
+            Txt(dc,item.name,rr.left+10,rr.top+4,W(rr)-controlW-22,19,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+            Txt(dc,item.source+L"  |  "+item.command,rr.left+10,rr.top+24,W(rr)-controlW-22,17,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+            if(item.canToggle)DrawSwitch(dc,R(rr.right-53,rr.top+9,42,25),item.enabled,ID_STARTUP_TOGGLE,static_cast<DWORD>(index));
+            else Txt(dc,L"All users",rr.right-83,rr.top+9,76,23,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+        }
+    }
+    Line(dc,list.left+13,footerY-4,list.right-13,footerY-4,C_LINE);
+    const std::wstring footerStatus=gStatus==L"Ready"?L"All-users entries are read-only.":gStatus;
+    Txt(dc,std::to_wstring(gStartupEntries.size())+L" items  |  "+footerStatus,list.left+17,footerY,list.right-list.left-34,18,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
 }
 static void DrawSettings(HDC dc,int cw) {
-    RECT content=MainContent(cw);DrawPageTitle(dc,content,L"Settings",L"Application information and update preferences.");
+    RECT content=MainContent(cw);DrawPageTitle(dc,content,L"Settings",L"Startup, update, and app preferences.");
     RECT card=R(content.left,151,W(content),158);Card(dc,card);
     Txt(dc,L"About N-Lite",card.left+20,card.top+18,W(card)-40,26,C_TEXT,gFontMed);
     Txt(dc,L"Version "+std::wstring(APP_VERSION),card.left+20,card.top+54,W(card)-40,21,C_MUTED,gFont);
@@ -1288,13 +1337,17 @@ static void DrawSettings(HDC dc,int cw) {
     Txt(dc,L"Project",repo.left+20,repo.top+15,W(repo)-190,23,C_TEXT,gFontMed);
     Txt(dc,L"View N-Lite source, releases and setup builds on GitHub.",repo.left+20,repo.top+43,W(repo)-190,20,C_MUTED,gFontSmall);
     DrawButton(dc,R(repo.right-181,repo.top+25,155,37),L"Open GitHub",ID_OPEN_GITHUB,C_PANEL2,C_TEXT);
+    RECT startup=R(content.left,430,W(content),82);Card(dc,startup);
+    Txt(dc,L"Launch N-Lite with Windows",startup.left+20,startup.top+14,W(startup)-105,23,C_TEXT,gFontMed);
+    Txt(dc,gAutoStart?L"N-Lite opens quietly when you sign in.":L"N-Lite only opens when you launch it.",startup.left+20,startup.top+42,W(startup)-105,20,C_MUTED,gFontSmall);
+    DrawSwitch(dc,R(startup.right-70,startup.top+25,48,27),gAutoStart,ID_AUTOSTART);
 }
 static void Paint(HDC dc, int cw, int ch) {
     Fill(dc,R(0,0,cw,ch),C_BG);gHits.clear();
     DrawHeader(dc,cw,ch);
     if(gPage==0)DrawMemory(dc,cw,ch);
     else if(gPage==1)DrawProcesses(dc,cw,ch);
-    else if(gPage==2)DrawStartup(dc,cw);
+    else if(gPage==2)DrawStartup(dc,cw,ch);
     else DrawSettings(dc,cw);
 }
 struct PopupState {
@@ -1403,6 +1456,9 @@ static void OpenProcessPopup(DWORD pid,int sx,int sy) {
     }else gStatus=L"Enter a threshold from 64 to 131072 MB.";
     gThresholdFocus=false;gThresholdReplaceOnType=false;gThresholdEdit.clear();
 }
+static void RefreshStartupEntries() {
+    gStartupEntries=EnumerateStartupItems();gAutoStart=ReadAutoStart();gStartupLastRefresh=GetTickCount();
+}
 static void SaveToggleAuto() {
     if(gAutoPurge){gAutoPurge=false;SaveSettings();gStatus=L"Automatic standby cleaning disabled.";return;}
     gAutoPurge=true;
@@ -1427,13 +1483,16 @@ static void HandleClick(int x,int y,bool dbl) {
     }
     else if(id==ID_MEMORY){gPage=0;gSearchFocus=false;}
     else if(id==ID_PROCESSES){gPage=1;gSearchFocus=false;RefreshProcesses();}
-    else if(id==ID_STARTUP){gPage=2;gSearchFocus=false;}
+    else if(id==ID_STARTUP){gPage=2;gSearchFocus=false;gStartupScroll=0;RefreshStartupEntries();}
     else if(id==ID_SETTINGS){gPage=3;gSearchFocus=false;}
     else if(id==ID_THEME){gDarkTheme=!gDarkTheme;ApplyThemeColors();RegWriteDword(L"ThemeDark",gDarkTheme?1:0);ApplyWindowChromeTheme(gWnd);}
     else if(id==ID_UPDATE)InstallLatestUpdate();
     else if(id==ID_UPDATE_CHECK_NOW){CheckForUpdatesAsync();}
     else if(id==ID_OPEN_GITHUB)ShellExecuteW(gWnd,L"open",L"https://github.com/gxlka/N-Lite",nullptr,nullptr,SW_SHOWNORMAL);
-    else if(id==ID_REFRESH){RefreshProcesses();UpdateMetrics();gStatus=L"Process list refreshed.";}
+    else if(id==ID_REFRESH){
+        if(gPage==2){RefreshStartupEntries();gStatus=L"Startup list refreshed.";}
+        else{RefreshProcesses();UpdateMetrics();gStatus=L"Process list refreshed.";}
+    }
     else if(id==ID_SEARCH){gSearchFocus=true;gThresholdFocus=false;}
     else if(id==ID_THRESHOLD_FIELD){gThresholdFocus=true;gThresholdReplaceOnType=true;gThresholdEdit=std::to_wstring(gThresholdMB);gSearchFocus=false;}
     else if(id==ID_AUTO)SaveToggleAuto();
@@ -1442,8 +1501,24 @@ static void HandleClick(int x,int y,bool dbl) {
     else if(id==ID_PURGE)DoPurge();
     else if(id==ID_AUTOSTART){
         bool next=!gAutoStart;
-        if(SetAutoStart(next)){gAutoStart=next;gStatus=next?L"N-Lite will start with Windows.":L"Windows startup entry removed.";}
+        if(SetAutoStart(next)){gAutoStart=next;gStatus=next?L"N-Lite will start with Windows.":L"Windows startup entry removed.";RefreshStartupEntries();}
         else gStatus=L"Could not update the current-user startup entry.";
+    }
+    else if(id==ID_STARTUP_ADD){
+        std::wstring added;
+        if(AddStartupApplication(gWnd,added)){gStatus=L"Added "+added+L" to startup.";RefreshStartupEntries();}
+        else if(!added.empty())gStatus=L"Windows could not add that app to startup.";
+    }
+    else if(id==ID_STARTUP_TOGGLE){
+        const size_t index=target->data;
+        if(index<gStartupEntries.size()){
+            StartupItem& item=gStartupEntries[index];bool ok=false;const bool next=!item.enabled;
+            if(item.kind==StartupKind::UserRun&&item.registryView==KEY_WOW64_64KEY&&_wcsicmp(item.name.c_str(),L"N-Lite")==0){
+                ok=SetAutoStart(next);if(ok)gAutoStart=next;
+            }else ok=SetStartupItemEnabled(item,next);
+            if(ok){gStatus=next?L"Startup app enabled.":L"Startup app disabled.";RefreshStartupEntries();}
+            else gStatus=L"Could not change that startup item.";
+        }
     }
     else if(id==ID_TIMER_TOGGLE){
         gTimerEnabled=!gTimerEnabled;
@@ -1452,17 +1527,7 @@ static void HandleClick(int x,int y,bool dbl) {
         if(gTimerEnabled&&gTimerActive)gStatus=L"Timer resolution enabled and saved.";
         else if(!gTimerEnabled)gStatus=L"Timer resolution disabled.";
     }
-    else if(id==ID_TIMER_PLUS){
-        RECT r=target->r;double den=(std::max)(1,W(r)-14);
-        double pos=(std::max)(0.0,(std::min)(1.0,(x-r.left-7)/den));
-        double desired=gTimerMinResolution+pos*static_cast<double>(gTimerMaxResolution-gTimerMinResolution);
-        gTimerResolution=static_cast<ULONG>((std::max)(static_cast<double>(gTimerMinResolution),(std::min)(static_cast<double>(gTimerMaxResolution),desired)));
-        gTimerResolution=(gTimerResolution/1000)*1000;
-        if(gTimerEnabled){SetTimerRequest(false);SetTimerRequest(true);}
-        SaveSettings();
-        if(gTimerEnabled&&!gTimerActive)gStatus=L"Windows rejected the selected timer resolution.";
-        else gStatus=L"Timer resolution saved.";
-    }
+    else if(id==ID_TIMER_PLUS){UpdateTimerSlider(x);CommitTimerSlider();}
     else if(id==100||id==101){
         gSelectedPid=target->data;
         if((id==101&&!dbl)||(id==100&&dbl)){
@@ -1489,6 +1554,13 @@ static void ShowTrayMenu() {
     DestroyMenu(m);
     if(cmd==ID_SHOW)ShowWindowFromTray();
     else if(cmd==ID_EXIT){gExiting=true;DestroyWindow(gWnd);}
+}
+static bool BeginTimerSliderDrag(int x,int y) {
+    Hit* target=nullptr;
+    for(auto it=gHits.rbegin();it!=gHits.rend();++it)if(Inside(it->r,x,y)){target=&*it;break;}
+    if(!target||target->id!=ID_TIMER_PLUS)return false;
+    gTimerDragOriginal=gTimerResolution;gTimerDragging=true;SetCapture(gWnd);
+    UpdateTimerSlider(x);InvalidateRect(gWnd,nullptr,FALSE);return true;
 }
 static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
     switch(msg){
@@ -1539,10 +1611,12 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
             PollCleanerStatus();
             if(gManualCleanerPending)RequestCleanerTaskRun(true);
             if(IsWindowVisible(h))UpdateMetrics();
+            if(IsWindowVisible(h)&&gPage==2&&GetTickCount()-gStartupLastRefresh>=5000)RefreshStartupEntries();
             if((IsWindowVisible(h)&&gPage==1)||(gHasProcessOverrides&&GetTickCount()-gLastRefresh>=5000))RefreshProcesses();
             if(IsWindowVisible(h))InvalidateRect(h,nullptr,FALSE);
         } return 0;
     case WM_MOUSEMOVE:{
+        if(gTimerDragging){const ULONG before=gTimerResolution;UpdateTimerSlider(GET_X_LPARAM(lp));if(before!=gTimerResolution)InvalidateRect(h,nullptr,FALSE);SetCursor(LoadCursorW(nullptr,IDC_HAND));return 0;}
         POINT pt{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};DWORD hover=0;int nav=-1,intervalHover=-1;bool hand=false;
         static const unsigned choices[]={60,120,300,600,900,1800,3600,7200};
         for(auto it=gHits.rbegin();it!=gHits.rend();++it)if(Inside(it->r,pt.x,pt.y)){
@@ -1550,6 +1624,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
             if(gPage==1&&(it->id==100||it->id==101)){hover=it->data;hand=true;}
             if(gPage==1&&it->id>=ID_SORT_NAME&&it->id<=ID_SORT_PRIVATE)hand=true;
             if(it->id==ID_INTERVAL_FIELD||it->id==ID_INTERVAL_OPTION)hand=true;
+            if(gPage==2&&(it->id==ID_STARTUP_ADD||it->id==ID_STARTUP_TOGGLE||it->id==ID_REFRESH))hand=true;
             if(it->id==ID_INTERVAL_OPTION)for(int i=0;i<static_cast<int>(sizeof(choices)/sizeof(choices[0]));++i)if(choices[i]==it->data)intervalHover=i;
             break;
         }
@@ -1569,10 +1644,22 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
         }
         return 0;
     }
-    case WM_LBUTTONUP:HandleClick(GET_X_LPARAM(lp),GET_Y_LPARAM(lp),false);return 0;
-    case WM_LBUTTONDBLCLK:HandleClick(GET_X_LPARAM(lp),GET_Y_LPARAM(lp),true);return 0;
+    case WM_LBUTTONDOWN:if(BeginTimerSliderDrag(GET_X_LPARAM(lp),GET_Y_LPARAM(lp)))return 0;return 0;
+    case WM_LBUTTONUP:
+        if(gTimerDragging){
+            UpdateTimerSlider(GET_X_LPARAM(lp));const bool changed=gTimerResolution!=gTimerDragOriginal;
+            gTimerDragging=false;if(GetCapture()==h)ReleaseCapture();if(changed)CommitTimerSlider();
+            InvalidateRect(h,nullptr,FALSE);return 0;
+        }
+        HandleClick(GET_X_LPARAM(lp),GET_Y_LPARAM(lp),false);return 0;
+    case WM_LBUTTONDBLCLK:
+        if(BeginTimerSliderDrag(GET_X_LPARAM(lp),GET_Y_LPARAM(lp)))return 0;
+        HandleClick(GET_X_LPARAM(lp),GET_Y_LPARAM(lp),true);return 0;
+    case WM_CAPTURECHANGED:
+        if(gTimerDragging){gTimerDragging=false;gTimerResolution=gTimerDragOriginal;InvalidateRect(h,nullptr,FALSE);}return 0;
     case WM_MOUSEWHEEL:
-        if(gPage==1){gScroll=(std::max)(0,gScroll-(GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA)*3);RefreshProcesses();InvalidateRect(h,nullptr,FALSE);}return 0;
+        if(gPage==1){gScroll=(std::max)(0,gScroll-(GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA)*3);RefreshProcesses();InvalidateRect(h,nullptr,FALSE);}
+        else if(gPage==2){gStartupScroll=(std::max)(0,gStartupScroll-(GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA)*3);InvalidateRect(h,nullptr,FALSE);}return 0;
     case WM_CHAR:
         if(gThresholdFocus){
             if(wp==13){CommitThresholdEdit();InvalidateRect(h,nullptr,FALSE);return 0;}
