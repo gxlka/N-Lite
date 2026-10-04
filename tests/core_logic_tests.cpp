@@ -7,6 +7,7 @@
 #include "process_visibility.h"
 
 #include <cstddef>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -26,6 +27,22 @@ void Check(bool condition, const char* name) {
 bool Inside(UiRect rect, int width, int height) {
     return rect.left >= 0 && rect.top >= 0 && rect.right <= width && rect.bottom <= height &&
         rect.right > rect.left && rect.bottom > rect.top;
+}
+
+struct MemoryQueryFixture {
+    int calls = 0;
+    SystemMemoryListInfo response{};
+    uint32_t requiredLength = sizeof(SystemMemoryListInfo) + 32;
+};
+
+int32_t FakeMemoryListQuery(uint32_t informationClass, void* buffer, uint32_t bufferLength,
+                            uint32_t* returnLength, MemoryQueryFixture& fixture) {
+    ++fixture.calls;
+    if (informationClass != kSystemMemoryListInformationClass) return static_cast<int32_t>(0xC0000003u);
+    if (returnLength) *returnLength = fixture.requiredLength;
+    if (bufferLength < fixture.requiredLength) return static_cast<int32_t>(0xC0000004u);
+    std::memcpy(buffer, &fixture.response, sizeof(fixture.response));
+    return 0;
 }
 }
 
@@ -84,8 +101,8 @@ int main() {
     Check(ShouldSuppressCleanerUpdateRetry(true, false, 2, 2) &&
         !ShouldSuppressCleanerUpdateRetry(true, false, 2, 1) &&
         !ShouldSuppressCleanerUpdateRetry(true, true, 2, 2) &&
-        !ShouldSuppressCleanerUpdateRetry(false, false, 2, 2),
-        "failed_helper_update_is_suppressed_only_for_installed_same_version");
+        ShouldSuppressCleanerUpdateRetry(false, false, 2, 2),
+        "failed_cleaner_setup_is_suppressed_for_same_version_until_manual_retry");
     Check(ShouldBlockCleanerSetupRetry(true, false) &&
         !ShouldBlockCleanerSetupRetry(true, true) &&
         !ShouldBlockCleanerSetupRetry(false, false),
@@ -111,6 +128,12 @@ int main() {
     Check(IsStartupTaskTriggerType(8) && IsStartupTaskTriggerType(9) &&
         !IsStartupTaskTriggerType(2),
         "only_boot_and_logon_tasks_count_as_startup");
+    Check(IsProtectedStartupTaskPath(L"\\Microsoft\\Windows\\UpdateOrchestrator") &&
+        !IsProtectedStartupTaskPath(L"\\Vendor\\Updater") &&
+        StartupEntryCanBeDeleted(true, false) && !StartupEntryCanBeDeleted(false, false) &&
+        !StartupEntryCanBeDeleted(true, true) && IsStartupFolderLaunchableFile(L"desktop.lnk") &&
+        IsStartupFolderLaunchableFile(L"app.exe") && !IsStartupFolderLaunchableFile(L"notes.txt"),
+        "startup_inventory_includes_system_tasks_but_only_deletes_owned_entries");
     Check(!kShowAllProcessesDefault &&
         ShouldShowProcess(false, true, true) &&
         !ShouldShowProcess(false, true, false) &&
@@ -152,6 +175,23 @@ int main() {
         offsetof(SystemMemoryListInfo, standby) == 20 &&
         FreeBytesFromPageCount(memoryLists, 4096) == 7u * 4096u,
         "memory_panel_reads_the_32_bit_free_and_standby_counters");
+    MemoryQueryFixture queryFixture;
+    queryFixture.response.standby[2] = 11;
+    queryFixture.response.freePageCount = 17;
+    SystemMemoryListInfo queriedMemory{};
+    const bool queryRetried = QuerySystemMemoryListInfo(
+        [&](uint32_t informationClass, void* buffer, uint32_t length, uint32_t* returned) {
+            return FakeMemoryListQuery(informationClass, buffer, length, returned, queryFixture);
+        }, queriedMemory);
+    Check(queryRetried && queryFixture.calls == 2 && queriedMemory.standby[2] == 11 &&
+        queriedMemory.freePageCount == 17,
+        "standby_query_retries_when_windows_reports_a_larger_buffer_requirement");
+    MemoryQueryFixture deniedQuery;
+    SystemMemoryListInfo deniedMemory{};
+    const bool deniedRead = QuerySystemMemoryListInfo(
+        [&](uint32_t, void*, uint32_t, uint32_t*) { return static_cast<int32_t>(0xC0000022u); },
+        deniedMemory);
+    Check(!deniedRead, "standby_query_reports_access_denied_instead_of_a_zero_size");
     Check(kSystemMemoryListInformationClass == 80 && kMemoryPurgeStandbyListCommand == 4,
         "cleaner_targets_the_standby_list");
 
@@ -168,6 +208,28 @@ int main() {
     Check(!ParseCleanerStatusOrDefault(L"", recoveredStatus) &&
         recoveredStatus.completedManualRequestId == 0 && recoveredStatus.autoArmed,
         "corrupt_cleaner_status_recovers_to_safe_defaults");
+
+    CleanerStatus standbyStatus;
+    standbyStatus.completedManualRequestId = 8;
+    standbyStatus.standbyValid = true;
+    standbyStatus.standbyBytes = 64u * 1024u * 1024u;
+    standbyStatus.standbyTick = 123456;
+    standbyStatus.manualStandbyValid = true;
+    standbyStatus.manualStandbyBefore = 80u * 1024u * 1024u;
+    standbyStatus.manualStandbyAfter = 4u * 1024u * 1024u;
+    CleanerStatus parsedStandbyStatus;
+    Check(ParseCleanerStatus(SerializeCleanerStatus(standbyStatus), parsedStandbyStatus) &&
+        parsedStandbyStatus.standbyValid && parsedStandbyStatus.standbyBytes == standbyStatus.standbyBytes &&
+        parsedStandbyStatus.standbyTick == standbyStatus.standbyTick &&
+        parsedStandbyStatus.manualStandbyValid &&
+        parsedStandbyStatus.manualStandbyBefore == standbyStatus.manualStandbyBefore &&
+        parsedStandbyStatus.manualStandbyAfter == standbyStatus.manualStandbyAfter,
+        "cleaner_status_round_trip_preserves_system_standby_measurements");
+    CleanerStatus legacyStatus;
+    Check(ParseCleanerStatus(L"version=1\nhelper_version=1\ncompleted_manual_request_id=0\n"
+            L"last_manual_status=0\nlast_auto_tick=0\nlast_auto_status=0\nauto_armed=1\n", legacyStatus) &&
+        !legacyStatus.standbyValid && legacyStatus.autoArmed,
+        "new_app_reads_existing_cleaner_status_without_standby_fields");
 
     const std::wstring invalidThreshold = L"version=1\nenabled=1\nthreshold_mb=63\ninterval_seconds=60\nmanual_request_id=0\n";
     Check(!ParseCleanerSettings(invalidThreshold, parsed), "invalid_settings_fail_closed");
@@ -211,7 +273,7 @@ int main() {
     }
     Check(sumsExactInstances && groups.size() == 2, "group_total_sums_only_identical_path_keys");
 
-    for (const auto dimensions : {std::pair<int, int>{960, 620}, {1240, 830}}) {
+    for (const auto& dimensions : {std::pair<int, int>{960, 620}, {1240, 830}}) {
         const MemoryLayout layout = ComputeMemoryLayout(dimensions.first, dimensions.second);
         const bool allInside = Inside(layout.header, dimensions.first, dimensions.second) &&
             Inside(layout.content, dimensions.first, dimensions.second) &&

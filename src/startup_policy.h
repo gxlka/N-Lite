@@ -58,3 +58,26 @@ inline bool StartupSourceEnabled(bool sourcePresent, StartupApprovalState state)
 inline bool IsStartupTaskTriggerType(int type) {
     return type == 8 || type == 9;
 }
+
+inline bool IsProtectedStartupTaskPath(const std::wstring& path) {
+    constexpr wchar_t prefix[] = L"\\Microsoft";
+    constexpr size_t prefixLength = sizeof(prefix) / sizeof(prefix[0]) - 1;
+    if (path.size() < prefixLength ||
+        !std::equal(prefix, prefix + prefixLength, path.begin(),
+            [](wchar_t a, wchar_t b) { return std::towlower(a) == std::towlower(b); })) return false;
+    return path.size() == prefixLength || path[prefixLength] == L'\\';
+}
+
+inline bool StartupEntryCanBeDeleted(bool currentUserOwned, bool protectedSource) {
+    return currentUserOwned && !protectedSource;
+}
+
+inline bool IsStartupFolderLaunchableFile(const std::wstring& name) {
+    const size_t dot = name.find_last_of(L'.');
+    if (dot == std::wstring::npos) return false;
+    std::wstring extension = name.substr(dot);
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+    return extension == L".lnk" || extension == L".url" || extension == L".exe" ||
+        extension == L".bat" || extension == L".cmd" || extension == L".vbs" || extension == L".js";
+}

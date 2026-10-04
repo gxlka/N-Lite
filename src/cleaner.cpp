@@ -17,7 +17,7 @@
 #include "cleaner_policy.h"
 
 #ifndef NLITE_CLEANER_VERSION
-#define NLITE_CLEANER_VERSION "2"
+#define NLITE_CLEANER_VERSION "3"
 #endif
 #define NLITE_WIDEN2(x) L##x
 #define NLITE_WIDEN(x) NLITE_WIDEN2(x)
@@ -414,8 +414,14 @@ static bool ReadStandbyBytes(uint64_t& bytes) {
     auto querySystem = ntdll ? reinterpret_cast<NtQuerySysFn>(GetProcAddress(ntdll, "NtQuerySystemInformation")) : nullptr;
     if (!querySystem) return false;
     SystemMemoryListInfo info{};
-    ULONG returned = 0;
-    if (querySystem(kSystemMemoryListInformationClass, &info, sizeof(info), &returned) < 0) return false;
+    const bool queried = QuerySystemMemoryListInfo(
+        [&](uint32_t informationClass, void* buffer, uint32_t bufferLength, uint32_t* returnLength) {
+            ULONG returned = 0;
+            const LONG status = querySystem(informationClass, buffer, bufferLength, &returned);
+            if (returnLength) *returnLength = returned;
+            return static_cast<int32_t>(status);
+        }, info);
+    if (!queried) return false;
     SYSTEM_INFO system{};
     GetSystemInfo(&system);
     const uint64_t pageSize = system.dwPageSize ? system.dwPageSize : 4096;
@@ -456,24 +462,41 @@ static bool Run(const std::wstring& sid) {
     }
 
     bool changed = false;
+    uint64_t standby = 0;
+    bool standbyValid = ReadStandbyBytes(standby);
+    status.standbyValid = standbyValid;
+    status.standbyBytes = standbyValid ? standby : 0;
+    status.standbyTick = GetTickCount64();
+    changed = true;
     if (settings.manualRequestId > status.completedManualRequestId) {
+        const uint64_t before = standby;
+        const bool beforeValid = standbyValid;
         LONG result = PurgeStandby();
+        uint64_t after = 0;
+        const bool afterValid = ReadStandbyBytes(after);
         status.completedManualRequestId = settings.manualRequestId;
         status.lastManualStatus = static_cast<int32_t>(result);
+        status.manualStandbyValid = beforeValid && afterValid;
+        status.manualStandbyBefore = beforeValid ? before : 0;
+        status.manualStandbyAfter = afterValid ? after : 0;
+        status.standbyValid = afterValid;
+        status.standbyBytes = afterValid ? after : 0;
+        status.standbyTick = GetTickCount64();
         changed = true;
-    } else if (settings.enabled) {
-        uint64_t standby = 0;
-        if (ReadStandbyBytes(standby)) {
-            const uint64_t now = GetTickCount64();
-            if (standby < static_cast<uint64_t>(settings.thresholdMb) * 1024u * 1024u) {
-                if (!status.autoArmed) { status.autoArmed = true; changed = true; }
-            } else if (ShouldRunAutoClean(settings, standby, now, status.lastAutoTick, status.autoArmed)) {
-                LONG result = PurgeStandby();
-                status.lastAutoTick = now;
-                status.lastAutoStatus = static_cast<int32_t>(result);
-                if (result >= 0) status.autoArmed = false;
-                changed = true;
-            }
+    } else if (settings.enabled && standbyValid) {
+        const uint64_t now = GetTickCount64();
+        if (standby < static_cast<uint64_t>(settings.thresholdMb) * 1024u * 1024u) {
+            if (!status.autoArmed) status.autoArmed = true;
+        } else if (ShouldRunAutoClean(settings, standby, now, status.lastAutoTick, status.autoArmed)) {
+            LONG result = PurgeStandby();
+            status.lastAutoTick = now;
+            status.lastAutoStatus = static_cast<int32_t>(result);
+            if (result >= 0) status.autoArmed = false;
+            uint64_t after = 0;
+            const bool afterValid = ReadStandbyBytes(after);
+            status.standbyValid = afterValid;
+            status.standbyBytes = afterValid ? after : 0;
+            status.standbyTick = GetTickCount64();
         }
     }
     if (changed) status.helperVersion = 1;
