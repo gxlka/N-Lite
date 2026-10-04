@@ -12,6 +12,14 @@ enum class CleanerSetupAction {
     Ready
 };
 
+// The protected helper/version marker prove setup completed. Per-user settings must exist,
+// but mutable status output is recovered by the SYSTEM helper and does not gate setup.
+inline bool HasProtectedCleanerRegistration(bool cleanerHelperPresent,
+                                            bool helperVersionMarkerValid,
+                                            bool perUserSettingsFilePresent) {
+    return cleanerHelperPresent && helperVersionMarkerValid && perUserSettingsFilePresent;
+}
+
 inline CleanerSetupAction DecideCleanerSetup(bool registrationMarkerValid, bool helperVersionCurrent) {
     if (!registrationMarkerValid) return CleanerSetupAction::Install;
     return helperVersionCurrent ? CleanerSetupAction::Ready : CleanerSetupAction::Update;
@@ -224,6 +232,12 @@ inline bool ParseCleanerStatus(const std::wstring& text, CleanerStatus& output) 
     parsed.autoArmed = armed != 0;
     output = parsed;
     return true;
+}
+
+inline bool ParseCleanerStatusOrDefault(const std::wstring& text, CleanerStatus& output) {
+    if (ParseCleanerStatus(text, output)) return true;
+    output = CleanerStatus{};
+    return false;
 }
 
 inline std::wstring SerializeCleanerStatus(const CleanerStatus& status) {

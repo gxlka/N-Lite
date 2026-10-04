@@ -17,7 +17,7 @@
 #include "cleaner_policy.h"
 
 #ifndef NLITE_CLEANER_VERSION
-#define NLITE_CLEANER_VERSION "1"
+#define NLITE_CLEANER_VERSION "2"
 #endif
 #define NLITE_WIDEN2(x) L##x
 #define NLITE_WIDEN(x) NLITE_WIDEN2(x)
@@ -435,13 +435,25 @@ static bool Run(const std::wstring& sid) {
     DWORD lock = WaitForSingleObject(mutex, 0);
     if (lock != WAIT_OBJECT_0 && lock != WAIT_ABANDONED) { CloseHandle(mutex); return true; }
 
+    const std::wstring settingsPath = SettingsPath(root, sid);
+    const std::wstring statusPath = StatusPath(root, sid);
     std::wstring settingsText, statusText;
     CleanerSettings settings;
     CleanerStatus status;
-    const bool readOk = ReadTextFile(SettingsPath(root, sid), settingsText) &&
-        ParseCleanerSettings(settingsText, settings) && ReadTextFile(StatusPath(root, sid), statusText) &&
-        ParseCleanerStatus(statusText, status);
-    if (!readOk) { ReleaseMutex(mutex); CloseHandle(mutex); return false; }
+    if (!ReadTextFile(settingsPath, settingsText) || !ParseCleanerSettings(settingsText, settings)) {
+        ReleaseMutex(mutex); CloseHandle(mutex); return false;
+    }
+    const bool statusValid = ReadTextFile(statusPath, statusText) &&
+        ParseCleanerStatusOrDefault(statusText, status);
+    if (!statusValid) {
+        status = CleanerStatus{};
+        const std::wstring statusAcl = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x120089;;;" + sid + L")";
+        const std::wstring resetStatus = SerializeCleanerStatus(status);
+        if (!SecureFile(statusPath, statusAcl, GENERIC_READ, resetStatus) ||
+            !WriteTextFile(statusPath, resetStatus)) {
+            ReleaseMutex(mutex); CloseHandle(mutex); return false;
+        }
+    }
 
     bool changed = false;
     if (settings.manualRequestId > status.completedManualRequestId) {

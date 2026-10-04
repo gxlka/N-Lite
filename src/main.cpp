@@ -552,13 +552,16 @@ static bool ReadCleanerHelperVersion(std::wstring& version) {
 }
 static bool CleanerRegistrationValid() {
     if (gCleanerRoot.empty() || gUserSid.empty()) return false;
-    DWORD helper = GetFileAttributesW((gCleanerRoot + L"\\N-Lite-Cleaner.exe").c_str());
-    std::wstring configText, statusText, helperVersion;
-    CleanerSettings settings; CleanerStatus status;
-    return helper != INVALID_FILE_ATTRIBUTES && !(helper & (FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY)) &&
-        ReadCleanerText(CleanerSettingsFile(), configText) && ParseCleanerSettings(configText, settings) &&
-        ReadCleanerText(CleanerStatusFile(), statusText) && ParseCleanerStatus(statusText, status) &&
-        ReadCleanerHelperVersion(helperVersion);
+    const auto isRegularFile = [](const std::wstring& path) {
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        return attributes != INVALID_FILE_ATTRIBUTES &&
+            !(attributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY));
+    };
+    std::wstring helperVersion;
+    return HasProtectedCleanerRegistration(
+        isRegularFile(gCleanerRoot + L"\\N-Lite-Cleaner.exe"),
+        ReadCleanerHelperVersion(helperVersion),
+        isRegularFile(CleanerSettingsFile()));
 }
 static bool CleanerHelperCurrent() {
     std::wstring version;
