@@ -61,13 +61,13 @@ int main() {
     CleanerStatus malformedCleanerStatus;
     Check(!ParseCleanerSettings(L"", malformedCleanerSettings) &&
         !ParseCleanerStatus(L"", malformedCleanerStatus) &&
-        HasProtectedCleanerRegistration(true, true, true, true) &&
-        DecideCleanerSetup(HasProtectedCleanerRegistration(true, true, true, true), true) ==
+        HasProtectedCleanerRegistration(true, true, true) &&
+        DecideCleanerSetup(HasProtectedCleanerRegistration(true, true, true), true) ==
             CleanerSetupAction::Ready,
         "malformed_runtime_file_contents_do_not_trigger_cleaner_setup_prompt");
-    Check(!HasProtectedCleanerRegistration(true, true, true, false) &&
-        !HasProtectedCleanerRegistration(true, false, true, true),
-        "cleaner_setup_requires_status_file_and_protected_completion_marker");
+    Check(!HasProtectedCleanerRegistration(true, false, true) &&
+        !HasProtectedCleanerRegistration(true, true, false),
+        "cleaner_setup_requires_settings_file_and_protected_completion_marker");
     Check(DecideCleanerSetup(true, true) == CleanerSetupAction::Ready,
         "persisted_cleaner_setup_with_current_helper_skips_admin_setup");
     Check(DecideCleanerSetup(true, false) == CleanerSetupAction::Update,
@@ -138,6 +138,13 @@ int main() {
     Check(ParseCleanerSettings(settingsText, parsed) && parsed.enabled && parsed.thresholdMb == 64 &&
         parsed.intervalSeconds == 7200 && parsed.manualRequestId == 7,
         "settings_round_trip_preserves_bounded_values");
+
+    CleanerStatus recoveredStatus;
+    recoveredStatus.completedManualRequestId = 9;
+    recoveredStatus.autoArmed = false;
+    Check(!ParseCleanerStatusOrDefault(L"", recoveredStatus) &&
+        recoveredStatus.completedManualRequestId == 0 && recoveredStatus.autoArmed,
+        "corrupt_cleaner_status_recovers_to_safe_defaults");
 
     const std::wstring invalidThreshold = L"version=1\nenabled=1\nthreshold_mb=63\ninterval_seconds=60\nmanual_request_id=0\n";
     Check(!ParseCleanerSettings(invalidThreshold, parsed), "invalid_settings_fail_closed");

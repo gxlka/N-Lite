@@ -561,8 +561,7 @@ static bool CleanerRegistrationValid() {
     return HasProtectedCleanerRegistration(
         isRegularFile(gCleanerRoot + L"\\N-Lite-Cleaner.exe"),
         ReadCleanerHelperVersion(helperVersion),
-        isRegularFile(CleanerSettingsFile()),
-        isRegularFile(CleanerStatusFile()));
+        isRegularFile(CleanerSettingsFile()));
 }
 static bool CleanerHelperCurrent() {
     std::wstring version;
