@@ -424,6 +424,8 @@ std::vector<StartupItem> EnumerateStartupItems() {
     AddScheduledStartupItems(items);
     auto lower=[](std::wstring value){std::transform(value.begin(),value.end(),value.begin(),[](wchar_t c){return static_cast<wchar_t>(std::towlower(c));});return value;};
     std::stable_sort(items.begin(),items.end(),[&](const StartupItem& a,const StartupItem& b){
+        const bool shellA=a.kind==StartupKind::WindowsShell,shellB=b.kind==StartupKind::WindowsShell;
+        if(shellA!=shellB)return StartupEntryPriorityBefore(shellA,shellB);
         if(a.enabled!=b.enabled)return a.enabled>b.enabled;
         const std::wstring as=lower(a.source),bs=lower(b.source);if(as!=bs)return as<bs;
         const std::wstring an=lower(a.name),bn=lower(b.name);if(an!=bn)return an<bn;return a.enabled>b.enabled;

@@ -72,6 +72,10 @@ inline bool StartupEntryCanBeDeleted(bool currentUserOwned, bool protectedSource
     return currentUserOwned && !protectedSource;
 }
 
+inline bool StartupEntryPriorityBefore(bool leftIsWindowsShell, bool rightIsWindowsShell) {
+    return leftIsWindowsShell && !rightIsWindowsShell;
+}
+
 inline bool IsStartupFolderLaunchableFile(const std::wstring& name) {
     const size_t dot = name.find_last_of(L'.');
     if (dot == std::wstring::npos) return false;

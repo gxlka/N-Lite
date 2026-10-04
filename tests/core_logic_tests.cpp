@@ -134,6 +134,9 @@ int main() {
         !StartupEntryCanBeDeleted(true, true) && IsStartupFolderLaunchableFile(L"desktop.lnk") &&
         IsStartupFolderLaunchableFile(L"app.exe") && !IsStartupFolderLaunchableFile(L"notes.txt"),
         "startup_inventory_includes_system_tasks_but_only_deletes_owned_entries");
+    Check(StartupEntryPriorityBefore(true, false) && !StartupEntryPriorityBefore(false, true) &&
+        !StartupEntryPriorityBefore(true, true),
+        "windows_desktop_and_sign_in_entries_are_prioritized_in_startup_list");
     Check(!kShowAllProcessesDefault &&
         ShouldShowProcess(false, true, true) &&
         !ShouldShowProcess(false, true, false) &&
