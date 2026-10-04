@@ -83,12 +83,7 @@ static COLORREF C_AMBER = RGB(228, 182, 108), C_AMBER_SOFT = RGB(53, 43, 29);
 static COLORREF C_RED = RGB(239, 135, 144), C_NAV_HOVER = RGB(31, 38, 52), C_SELECTED = RGB(38, 47, 73);
 static COLORREF C_FIELD = RGB(16, 20, 29), C_ROW = RGB(23, 29, 42), C_TRACK = RGB(57, 64, 81);
 
-struct MemListInfo {
-    SIZE_T zero, free, modified, modifiedNoWrite, bad;
-    SIZE_T standby[8];
-    SIZE_T repurposed[8];
-    SIZE_T modifiedPageFile;
-};
+using MemListInfo = SystemMemoryListInfo;
 struct ProcRow {
     DWORD pid = 0, ppid = 0;
     std::wstring name, path;
@@ -243,10 +238,11 @@ static void LoadNt() {
 static bool ReadStandby(double& out, double& freeOut) {
     if (!gNtQuerySys) return false;
     MemListInfo info{}; ULONG ret = 0;
-    LONG st = gNtQuerySys(80, &info, sizeof(info), &ret);
+    LONG st = gNtQuerySys(kSystemMemoryListInformationClass, &info, sizeof(info), &ret);
     if (st < 0) return false;
-    SIZE_T pages = 0; for (auto v : info.standby) pages += v;
-    out = static_cast<double>(pages) * gPageSize; freeOut = static_cast<double>(info.free) * gPageSize; return true;
+    out = static_cast<double>(StandbyBytesFromPageCounts(info, gPageSize));
+    freeOut = static_cast<double>(FreeBytesFromPageCount(info, gPageSize));
+    return true;
 }
 static bool IsNtOk(LONG s) { return s >= 0; }
 static BOOL CALLBACK PageFileUsageCallback(PVOID context, PENUM_PAGE_FILE_INFORMATION info, LPCWSTR) {
@@ -1288,7 +1284,7 @@ static void DrawMetricCard(HDC dc, RECT r, const wchar_t* label, const std::wstr
 }
 static void DrawMemory(HDC dc, int cw, int ch) {
     RECT content=MainContent(cw);
-    DrawPageTitle(dc,content,L"Memory",L"Live memory use and standby cleanup.");
+    DrawPageTitle(dc,content,L"Memory",L"");
     const MemoryLayout layout=ComputeMemoryLayout(cw,ch);
     RECT memory{layout.memory.left,layout.memory.top,layout.memory.right,layout.memory.bottom};
     RECT clean{layout.cleaner.left,layout.cleaner.top,layout.cleaner.right,layout.cleaner.bottom};
@@ -1332,51 +1328,26 @@ static void DrawMemory(HDC dc, int cw, int ch) {
     Txt(dc,Bytes(gMetrics.commit)+L" / "+Bytes(gMetrics.commitLimit),rowX+150,memory.top+255,rowW-150,28,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
 
     const int cleanPad=16;
-    const bool setupBusy=gCleanerSetupProcess&&WaitForSingleObject(gCleanerSetupProcess,0)==WAIT_TIMEOUT;
-    const CleanerBadgeState badge=CleanerBadgeFor(gAutoPurge,setupBusy,gCleanerCurrentVersion,gCleanerInstalled,gCleanerSetupBlocked);
-    const wchar_t* state=badge==CleanerBadgeState::Off?L"Off":
-        badge==CleanerBadgeState::On?L"On":
-        badge==CleanerBadgeState::SettingUp?L"Setting up":
-        badge==CleanerBadgeState::UpdateNeeded?L"Update":L"Setup";
-    const COLORREF stateColor=badge==CleanerBadgeState::Off?C_MUTED:
-        badge==CleanerBadgeState::On?C_GREEN:C_AMBER;
-    const COLORREF stateSurface=badge==CleanerBadgeState::Off?C_PANEL2:
-        badge==CleanerBadgeState::On?C_GREEN_SOFT:C_AMBER_SOFT;
-    RECT chip=R(clean.right-cleanPad-104,clean.top+17,104,23);
-    Round(dc,chip,stateSurface,stateSurface,12);
-    Round(dc,R(chip.left+9,chip.top+8,7,7),stateColor,stateColor,4);
-    Txt(dc,state,chip.left+22,chip.top,W(chip)-27,H(chip),stateColor,gFontSmall);
-    Txt(dc,L"Standby cleaner",clean.left+cleanPad,clean.top+16,W(clean)-132,24,C_TEXT,gFontMed);
-    const wchar_t* cleanerCaption=badge==CleanerBadgeState::Off?
-        (gCleanerInstalled?L"Auto clean is off; manual clean is ready.":L"Auto clean is off; manual setup starts when you clean."):
-        badge==CleanerBadgeState::On?
-            (!gCleanerCurrentVersion?L"Auto clean is on; the existing cleaner remains available.":
-                L"Auto clean is on; routine cleans stay unelevated."):
-        badge==CleanerBadgeState::SettingUp?L"Setting up cleaner.":
-        badge==CleanerBadgeState::UpdateNeeded?L"Existing cleaner is available; its helper update is pending.":
-        L"One-time setup is needed for automatic cleaning.";
-    Txt(dc,cleanerCaption,clean.left+cleanPad,clean.top+43,W(clean)-2*cleanPad,19,C_MUTED,gFontSmall);
+    Txt(dc,L"Standby cleaner",clean.left+cleanPad,clean.top+16,W(clean)-2*cleanPad,24,C_TEXT,gFontMed);
 
     const int innerW=W(clean)-2*cleanPad;
-    Txt(dc,L"Threshold · MB",clean.left+cleanPad,clean.top+74,innerW,17,C_MUTED,gFontSmall);
-    RECT threshold=R(clean.left+cleanPad,clean.top+94,innerW,35);
+    Txt(dc,L"Threshold",clean.left+cleanPad,clean.top+54,innerW,17,C_MUTED,gFontSmall);
+    RECT threshold=R(clean.left+cleanPad,clean.top+74,innerW,35);
     Round(dc,threshold,C_FIELD,gThresholdFocus?C_ACCENT:C_LINE,8);
     Txt(dc,gThresholdFocus?gThresholdEdit:std::to_wstring(gThresholdMB),threshold.left+12,threshold.top, W(threshold)-20,H(threshold),C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
     AddHit(threshold,ID_THRESHOLD_FIELD);
 
-    Txt(dc,L"Automatic check",clean.left+cleanPad,clean.top+139,innerW,17,C_MUTED,gFontSmall);
-    RECT interval=R(clean.left+cleanPad,clean.top+159,innerW,35);
+    Txt(dc,L"Automatic check",clean.left+cleanPad,clean.top+119,innerW,17,C_MUTED,gFontSmall);
+    RECT interval=R(clean.left+cleanPad,clean.top+139,innerW,35);
     Round(dc,interval,C_FIELD,gIntervalOpen?C_ACCENT:C_LINE,8);
     Txt(dc,L"Every "+IntervalLabel(gIntervalSec),interval.left+12,interval.top,W(interval)-42,H(interval),C_TEXT,gFont,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
     Txt(dc,gIntervalOpen?L"^":L"v",interval.right-30,interval.top,22,H(interval),C_MUTED,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
     AddHit(interval,ID_INTERVAL_FIELD);
 
-    Txt(dc,L"Auto clean",clean.left+cleanPad,clean.top+204,innerW-63,20,C_TEXT,gFontMed);
-    Txt(dc,L"When standby reaches the threshold",clean.left+cleanPad,clean.top+224,innerW-70,16,C_MUTED,gFontSmall);
-    DrawSwitch(dc,R(clean.right-cleanPad-46,clean.top+207,46,26),gAutoPurge,ID_AUTO);
+    Txt(dc,L"Auto clean",clean.left+cleanPad,clean.top+194,innerW-63,20,C_TEXT,gFontMed);
+    DrawSwitch(dc,R(clean.right-cleanPad-46,clean.top+191,46,26),gAutoPurge,ID_AUTO);
 
     DrawButton(dc,R(clean.left+cleanPad,clean.top+251,innerW,38),L"Clean now",ID_PURGE,C_ACCENT,RGB(255,255,255),true);
-    Txt(dc,gStatus,clean.left+cleanPad,clean.bottom-23,innerW,16,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
 
     Txt(dc,L"Timer resolution",timer.left+18,timer.top+12,210,22,C_TEXT,gFontMed);
     Txt(dc,L"Released when N-Lite exits.",timer.left+18,timer.top+38,205,17,C_MUTED,gFontSmall);
@@ -1583,7 +1554,7 @@ static void OpenProcessPopup(DWORD pid,int sx,int sy) {
     wchar_t* end=nullptr;unsigned long n=std::wcstoul(gThresholdEdit.c_str(),&end,10);
     if(end&&end!=gThresholdEdit.c_str()&&*end==0&&n){
         gThresholdMB=static_cast<unsigned>((std::max)(64ul,(std::min)(131072ul,n)));
-        SaveSettings();gStatus=L"Standby threshold saved.";
+        SaveSettings();gStatus=L"Ready";
     }else gStatus=L"Enter a threshold from 64 to 131072 MB.";
     gThresholdFocus=false;gThresholdReplaceOnType=false;gThresholdEdit.clear();
 }
@@ -1591,7 +1562,7 @@ static void RefreshStartupEntries() {
     gStartupEntries=EnumerateStartupItems();gAutoStart=ReadAutoStart();gStartupLastRefresh=GetTickCount();
 }
 static void SaveToggleAuto() {
-    if(gAutoPurge){gAutoPurge=kAutoCleanDefaultEnabled;SaveSettings();gStatus=L"Automatic standby cleaning disabled.";return;}
+    if(gAutoPurge){gAutoPurge=kAutoCleanDefaultEnabled;SaveSettings();gStatus=L"Ready";return;}
     gAutoPurge=true;
     SaveSettings();
     if(!gCleanerInstalled)gCleanerSetupBlocked=false;
@@ -1630,7 +1601,7 @@ static void HandleClick(int x,int y,bool dbl) {
     else if(id==ID_THRESHOLD_FIELD){gThresholdFocus=true;gThresholdReplaceOnType=true;gThresholdEdit=std::to_wstring(gThresholdMB);gSearchFocus=false;}
     else if(id==ID_AUTO)SaveToggleAuto();
     else if(id==ID_INTERVAL_FIELD){gIntervalOpen=!gIntervalOpen;gIntervalHover=-1;}
-    else if(id==ID_INTERVAL_OPTION){gIntervalSec=target->data;gIntervalOpen=false;gIntervalHover=-1;SaveSettings();gStatus=L"Automatic clean interval saved.";}
+    else if(id==ID_INTERVAL_OPTION){gIntervalSec=target->data;gIntervalOpen=false;gIntervalHover=-1;SaveSettings();gStatus=L"Ready";}
     else if(id==ID_PURGE)DoPurge();
     else if(id==ID_AUTOSTART){
         bool next=!gAutoStart;

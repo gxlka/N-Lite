@@ -86,9 +86,6 @@ int main() {
         !ShouldSuppressCleanerUpdateRetry(true, true, 2, 2) &&
         !ShouldSuppressCleanerUpdateRetry(false, false, 2, 2),
         "failed_helper_update_is_suppressed_only_for_installed_same_version");
-    Check(CleanerBadgeFor(true, false, false, true, true) == CleanerBadgeState::On,
-        "cleaner_badge_shows_active_when_using_registered_fallback");
-
     const std::vector<uint8_t> approvalEnabled{2, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     const std::vector<uint8_t> approvalDisabled{3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     Check(ParseStartupApprovalState(approvalEnabled) == StartupApprovalState::Enabled &&
@@ -112,10 +109,7 @@ int main() {
         !ShouldShowProcess(false, false, false) &&
         ShouldShowProcess(true, false, false),
         "process_list_hides_non_user_processes_until_show_all");
-    Check(!kAutoCleanDefaultEnabled &&
-        CleanerBadgeFor(false, false, false, false) == CleanerBadgeState::Off &&
-        CleanerBadgeFor(true, false, false, false) == CleanerBadgeState::SetupNeeded,
-        "cleaner_badge_respects_auto_clean_off_by_default");
+    Check(!kAutoCleanDefaultEnabled, "auto_clean_is_off_by_default");
     Check(IsValidCleanerSid(L"S-1-5-21-100-200-300-1001"), "valid_user_sid_is_accepted");
     Check(!IsValidCleanerSid(L"S-1-5-21-100-200-300-1001\\.."), "sid_path_injection_is_rejected");
     Check(!IsValidCleanerSid(L"S-1-5-21-100-200-300-"), "sid_trailing_separator_is_rejected");
@@ -150,6 +144,8 @@ int main() {
         offsetof(SystemMemoryListInfo, standby) == 20 &&
         FreeBytesFromPageCount(memoryLists, 4096) == 7u * 4096u,
         "memory_panel_reads_the_32_bit_free_and_standby_counters");
+    Check(kSystemMemoryListInformationClass == 80 && kMemoryPurgeStandbyListCommand == 4,
+        "cleaner_targets_the_standby_list");
 
     CleanerSettings settings{true, 64, 7200, 7};
     const std::wstring settingsText = SerializeCleanerSettings(settings);

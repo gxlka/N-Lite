@@ -402,8 +402,8 @@ static LONG PurgeStandby() {
         CloseHandle(token);
         return static_cast<LONG>(0xC0000061L);
     }
-    ULONG command = 4; // MemoryPurgeStandbyList
-    LONG status = setSystem(80, &command, sizeof(command));
+    ULONG command = kMemoryPurgeStandbyListCommand; // MemoryPurgeStandbyList
+    LONG status = setSystem(kSystemMemoryListInformationClass, &command, sizeof(command));
     if (previous.PrivilegeCount) AdjustTokenPrivileges(token, FALSE, &previous, 0, nullptr, nullptr);
     CloseHandle(token);
     return status;
@@ -415,7 +415,7 @@ static bool ReadStandbyBytes(uint64_t& bytes) {
     if (!querySystem) return false;
     SystemMemoryListInfo info{};
     ULONG returned = 0;
-    if (querySystem(80, &info, sizeof(info), &returned) < 0) return false;
+    if (querySystem(kSystemMemoryListInformationClass, &info, sizeof(info), &returned) < 0) return false;
     SYSTEM_INFO system{};
     GetSystemInfo(&system);
     const uint64_t pageSize = system.dwPageSize ? system.dwPageSize : 4096;
