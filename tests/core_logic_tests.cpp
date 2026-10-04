@@ -90,6 +90,10 @@ int main() {
         !ShouldBlockCleanerSetupRetry(true, true) &&
         !ShouldBlockCleanerSetupRetry(false, false),
         "manual_clean_retries_failed_setup_without_auto_retry_loop");
+    Check(StandbyCleanSucceeded(0, 16 * 1024 * 1024, 2 * 1024 * 1024, 4096) &&
+        !StandbyCleanSucceeded(0, 16 * 1024 * 1024, 16 * 1024 * 1024, 4096) &&
+        !StandbyCleanSucceeded(static_cast<int32_t>(0xC0000061u), 16 * 1024 * 1024, 2 * 1024 * 1024, 4096),
+        "standby_clean_succeeds_only_when_windows_succeeds_and_size_drops");
     const std::vector<uint8_t> approvalEnabled{2, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     const std::vector<uint8_t> approvalDisabled{3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     Check(ParseStartupApprovalState(approvalEnabled) == StartupApprovalState::Enabled &&
