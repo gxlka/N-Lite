@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.3"
+  #define MyAppVersion "0.2.4"
 #endif
 
 #define MyAppName "N-Lite"
@@ -13,6 +13,7 @@ AppPublisher=N-Lite
 AppPublisherURL=https://github.com/gxlka/N-Lite
 AppSupportURL=https://github.com/gxlka/N-Lite/issues
 AppUpdatesURL=https://github.com/gxlka/N-Lite/releases
+SetupIconFile=..\src\app.ico
 DefaultDirName={localappdata}\Programs\N-Lite
 DefaultGroupName=N-Lite
 DisableProgramGroupPage=yes

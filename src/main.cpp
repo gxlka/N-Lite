@@ -34,6 +34,8 @@
 #include "ui_layout.h"
 #include "ui_theme.h"
 
+static constexpr WORD IDI_NLITE = 101;
+
 #pragma comment(lib, "psapi.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "advapi32.lib")
@@ -43,7 +45,7 @@
 #pragma comment(lib, "shlwapi.lib")
 
 #ifndef NLITE_VERSION
-#define NLITE_VERSION "0.1.0"
+#define NLITE_VERSION "0.2.4"
 #endif
 #ifndef NLITE_CLEANER_VERSION
 #define NLITE_CLEANER_VERSION "1"
@@ -63,7 +65,7 @@ static const int ID_SORT_NAME = 20, ID_SORT_PID = 21, ID_SORT_CPU = 22, ID_SORT_
 static const int ID_PURGE = 30, ID_AUTO = 31, ID_THRESHOLD_DOWN = 32, ID_THRESHOLD_UP = 33, ID_THRESHOLD_FIELD = 37;
 static const int ID_INTERVAL_FIELD = 34, ID_ELEVATE = 36, ID_INTERVAL_OPTION = 38, ID_THEME = 46;
 static const int ID_TIMER_TOGGLE = 40, ID_TIMER_MINUS = 41, ID_TIMER_PLUS = 42, ID_AUTOSTART = 43, ID_UPDATE_CHECK_NOW = 44, ID_OPEN_GITHUB = 45;
-static const int ID_END = 50, ID_AFFINITY = 51, ID_PRIORITY = 52, ID_GPU_HIGH = 53, ID_GPU_SAVE = 54;
+
 static const int ID_EXIT = 9001, ID_SHOW = 9002, ID_UPDATE = 9003;
 static COLORREF C_BG = RGB(17, 21, 29), C_PANEL = RGB(26, 32, 42), C_PANEL2 = RGB(21, 26, 35);
 static COLORREF C_LINE = RGB(43, 52, 66), C_TEXT = RGB(233, 237, 245), C_MUTED = RGB(151, 162, 178);
@@ -162,10 +164,8 @@ static void ApplyWindowChromeTheme(HWND hwnd) {
 
 static bool ReadProcessDword(const wchar_t* kind, const std::wstring& path, DWORD& value);
 static bool ReadProcessQword(const wchar_t* kind, const std::wstring& path, uint64_t& value);
-static bool WriteProcessDword(const wchar_t* kind, const std::wstring& path, DWORD value);
-static bool WriteProcessQword(const wchar_t* kind, const std::wstring& path, uint64_t value);
-static void ApplyStoredProcessSettings(const ProcRow& p);
 static bool ProcessOverridesExist();
+static void ApplyStoredProcessSettings(const ProcRow& p);
 
 using NtQuerySysFn = LONG (NTAPI*)(ULONG, PVOID, ULONG, PULONG);
 using NtQueryTimerFn = LONG (NTAPI*)(PULONG, PULONG, PULONG);
@@ -579,21 +579,6 @@ static bool ReadAutoStart() {
     DWORD type = 0, cb = 0; LONG r = RegQueryValueExW(k, L"N-Lite", nullptr, &type, nullptr, &cb); RegCloseKey(k);
     return r == ERROR_SUCCESS && type == REG_SZ;
 }
-static std::wstring GpuPreference(const std::wstring& path) {
-    if (path.empty() || path == L"Path unavailable") return L"";
-    HKEY k; if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\DirectX\\UserGpuPreferences", 0, KEY_QUERY_VALUE, &k) != ERROR_SUCCESS) return L"";
-    wchar_t b[256]{}; DWORD cb = sizeof(b), type = 0;
-    LONG r = RegQueryValueExW(k, path.c_str(), nullptr, &type, reinterpret_cast<BYTE*>(b), &cb); RegCloseKey(k);
-    if (r != ERROR_SUCCESS || type != REG_SZ) return L"";
-    return b;
-}
-static bool SetGpuPreference(const std::wstring& path, bool high) {
-    if (path.empty() || path == L"Path unavailable") return false;
-    HKEY k; if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\DirectX\\UserGpuPreferences", 0, nullptr, 0, KEY_SET_VALUE, nullptr, &k, nullptr) != ERROR_SUCCESS) return false;
-    std::wstring val = high ? L"GpuPreference=2;" : L"GpuPreference=1;";
-    LONG r = RegSetValueExW(k, path.c_str(), 0, REG_SZ, reinterpret_cast<const BYTE*>(val.c_str()), static_cast<DWORD>((val.size() + 1) * sizeof(wchar_t)));
-    RegCloseKey(k); return r == ERROR_SUCCESS;
-}
 static std::wstring ProcessSettingName(const wchar_t* kind,const std::wstring& path) {
     return std::wstring(kind)+L":"+path;
 }
@@ -608,18 +593,6 @@ static bool ReadProcessQword(const wchar_t* kind,const std::wstring& path,uint64
     HKEY k;if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\N-Lite\\ProcessSettings",0,KEY_QUERY_VALUE,&k)!=ERROR_SUCCESS)return false;
     DWORD type=0,cb=sizeof(value);LONG r=RegQueryValueExW(k,ProcessSettingName(kind,path).c_str(),nullptr,&type,reinterpret_cast<BYTE*>(&value),&cb);
     RegCloseKey(k);return r==ERROR_SUCCESS&&type==REG_QWORD&&cb==sizeof(value);
-}
-static bool WriteProcessDword(const wchar_t* kind,const std::wstring& path,DWORD value) {
-    if(path.empty()||path==L"Path unavailable")return false;
-    HKEY k;if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\N-Lite\\ProcessSettings",0,nullptr,0,KEY_SET_VALUE,nullptr,&k,nullptr)!=ERROR_SUCCESS)return false;
-    std::wstring name=ProcessSettingName(kind,path);LONG r=RegSetValueExW(k,name.c_str(),0,REG_DWORD,reinterpret_cast<const BYTE*>(&value),sizeof(value));
-    RegCloseKey(k);if(r==ERROR_SUCCESS)gHasProcessOverrides=true;return r==ERROR_SUCCESS;
-}
-static bool WriteProcessQword(const wchar_t* kind,const std::wstring& path,uint64_t value) {
-    if(path.empty()||path==L"Path unavailable")return false;
-    HKEY k;if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\N-Lite\\ProcessSettings",0,nullptr,0,KEY_SET_VALUE,nullptr,&k,nullptr)!=ERROR_SUCCESS)return false;
-    std::wstring name=ProcessSettingName(kind,path);LONG r=RegSetValueExW(k,name.c_str(),0,REG_QWORD,reinterpret_cast<const BYTE*>(&value),sizeof(value));
-    RegCloseKey(k);if(r==ERROR_SUCCESS)gHasProcessOverrides=true;return r==ERROR_SUCCESS;
 }
 static bool ProcessOverridesExist() {
     HKEY k;if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\N-Lite\\ProcessSettings",0,KEY_QUERY_VALUE,&k)!=ERROR_SUCCESS)return false;
@@ -705,8 +678,8 @@ static std::wstring PackagedCleanerPath() {
     return (slash == std::wstring::npos ? L"" : gExePath.substr(0, slash + 1)) + L"N-Lite-Cleaner.exe";
 }
 static bool StartCleanerSetup(bool forAuto, bool forManual) {
-    if (gCleanerSetupBlocked && gCleanerInstalled) {
-        gStatus = L"The existing cleaner is still available; helper setup can be retried after restarting N-Lite.";
+    if (gCleanerSetupBlocked) {
+        gStatus = L"Cleaner setup did not finish. Restart N-Lite to retry setup.";
         return false;
     }
     gCleanerSetupForAuto = gCleanerSetupForAuto || forAuto;
@@ -718,16 +691,14 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
     if (gCleanerSetupProcess) { CloseHandle(gCleanerSetupProcess); gCleanerSetupProcess = nullptr; }
     if (gUserSid.empty()) {
         gCleanerSetupBlocked=true;
-        const bool disableAuto=gCleanerSetupForAuto;gCleanerSetupForAuto=false;gCleanerSetupForManual=false;
-        if(disableAuto&&!gCleanerInstalled){gAutoPurge=false;SaveSettings();}
+        gCleanerSetupForAuto=false;gCleanerSetupForManual=false;
         gStatus = L"Could not identify this Windows account for cleaner setup."; return false;
     }
     const std::wstring helper = PackagedCleanerPath();
     DWORD attributes = GetFileAttributesW(helper.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
         gCleanerSetupBlocked=true;
-        const bool disableAuto=gCleanerSetupForAuto;gCleanerSetupForAuto=false;gCleanerSetupForManual=false;
-        if(disableAuto&&!gCleanerInstalled){gAutoPurge=false;SaveSettings();}
+        gCleanerSetupForAuto=false;gCleanerSetupForManual=false;
         gStatus = L"N-Lite-Cleaner.exe is missing. Reinstall N-Lite to restore the cleaner.";
         return false;
     }
@@ -744,11 +715,8 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
     if (!ShellExecuteExW(&execute)) {
         DWORD error = GetLastError();
         gCleanerSetupBlocked=true;
-        const bool disableAuto=gCleanerSetupForAuto;
         gCleanerSetupForAuto = false;
         gCleanerSetupForManual = false;
-        if (disableAuto && !gCleanerInstalled) { gAutoPurge = false; SaveSettings(); }
-        else if (disableAuto && gCleanerInstalled) SaveSettings();
         gStatus = error == ERROR_CANCELLED ? L"Cleaner setup was cancelled. N-Lite stayed unelevated." :
             L"Could not start the one-time cleaner setup.";
         return false;
@@ -792,8 +760,7 @@ static void PollCleanerSetup() {
     RegWriteDword(L"AutoTaskReady", gCleanerInstalled ? 1 : 0);
     if (!gCleanerInstalled || !gCleanerCurrentVersion || result != 0) {
         gCleanerSetupBlocked=true;
-        if (!gCleanerInstalled && forAuto) { gAutoPurge = false; SaveSettings(); }
-        else if (gCleanerInstalled) {
+        if (gCleanerInstalled) {
             SaveSettings();
             if (forManual) RequestCleanerTaskRun(true);
             else if (gAutoPurge) RequestCleanerTaskRun(false);
@@ -848,45 +815,7 @@ static void DoPurge() {
         StartCleanerSetup(false, true);
         return;
     }
-    if (!gCleanerCurrentVersion && !gCleanerSetupBlocked && StartCleanerSetup(false, true)) return;
     RequestCleanerTaskRun(true);
-}
-static void OpenAffinityMenu(ProcRow* p, POINT pt) {
-    if (!p) return;
-    HANDLE ph = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_INFORMATION, FALSE, p->pid);
-    if (!ph) { gStatus = L"Could not open this process to set affinity."; return; }
-    DWORD_PTR procMask = 0, sysMask = 0;
-    if (!GetProcessAffinityMask(ph, &procMask, &sysMask)) { CloseHandle(ph); gStatus = L"Could not read CPU affinity."; return; }
-    HMENU menu = CreatePopupMenu(); int count = static_cast<int>(sizeof(DWORD_PTR) * 8);
-    for (int i = 0; i < count; ++i) {
-        DWORD_PTR bit = (static_cast<DWORD_PTR>(1) << i);
-        if (!(sysMask & bit)) continue;
-        std::wstring label = L"CPU " + std::to_wstring(i);
-        AppendMenuW(menu, MF_STRING | ((procMask & bit) ? MF_CHECKED : 0), 2000 + i, label.c_str());
-    }
-    int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, gWnd, nullptr);
-    if (cmd >= 2000 && cmd < 2000 + count) {
-        DWORD_PTR bit = static_cast<DWORD_PTR>(1) << (cmd - 2000);
-        DWORD_PTR next = procMask ^ bit;
-        if (next && SetProcessAffinityMask(ph, next)) gStatus = L"CPU affinity updated for " + p->name + L".";
-        else gStatus = L"Affinity must include at least one CPU; Windows may also deny this change.";
-    }
-    DestroyMenu(menu); CloseHandle(ph); InvalidateRect(gWnd, nullptr, FALSE);
-}
-static void OpenPriorityMenu(ProcRow* p, POINT pt) {
-    if (!p) return;
-    HANDLE ph = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_INFORMATION, FALSE, p->pid);
-    if (!ph) { gStatus = L"Could not open this process to change priority."; return; }
-    DWORD cur = GetPriorityClass(ph); HMENU m = CreatePopupMenu();
-    struct Opt { DWORD c; const wchar_t* n; } opts[] = {
-        { IDLE_PRIORITY_CLASS, L"Idle" }, { BELOW_NORMAL_PRIORITY_CLASS, L"Below normal" },
-        { NORMAL_PRIORITY_CLASS, L"Normal" }, { ABOVE_NORMAL_PRIORITY_CLASS, L"Above normal" }, { HIGH_PRIORITY_CLASS, L"High" }
-    };
-    for (auto& o : opts) AppendMenuW(m, MF_STRING | (cur == o.c ? MF_CHECKED : 0), o.c, o.n);
-    int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, gWnd, nullptr);
-    if (cmd && SetPriorityClass(ph, cmd)) gStatus = L"Priority updated for " + p->name + L".";
-    else if (cmd) gStatus = L"Windows denied the priority change.";
-    DestroyMenu(m); CloseHandle(ph); InvalidateRect(gWnd, nullptr, FALSE);
 }
 static std::string JsonString(const std::string& json,const std::string& key,size_t from=0) {
     std::string marker="\""+key+"\"";size_t p=json.find(marker,from);if(p==std::string::npos)return {};
@@ -1369,22 +1298,18 @@ static void Paint(HDC dc, int cw, int ch) {
     else DrawSettings(dc,cw);
 }
 struct PopupState {
-    HWND hwnd=nullptr;DWORD pid=0;int subKind=-1,hoverMain=-1,hoverSub=-1,scroll=0;
-    int anchorX=0,anchorY=0,width=492,height=286;
+    HWND hwnd=nullptr;DWORD pid=0;int hoverMain=-1;
+    int anchorX=0,anchorY=0,width=440,height=176;
 };
 static PopupState gPopup;
 static ProcRow* FindProcess(DWORD pid) {
     auto it=std::find_if(gProcs.begin(),gProcs.end(),[&](const ProcRow& p){return p.pid==pid;});
     return it==gProcs.end()?nullptr:&*it;
 }
-static bool GetAffinity(DWORD pid,DWORD_PTR& procMask,DWORD_PTR& sysMask) {
-    HANDLE h=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!h)return false;
-    BOOL ok=GetProcessAffinityMask(h,&procMask,&sysMask);CloseHandle(h);return ok!=FALSE;
-}
 static void ResizePopup() {
     if(!gPopup.hwnd)return;
     RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
-    gPopup.width=(std::min)(492,W(work)-16);gPopup.height=(std::min)(286,H(work)-16);
+    gPopup.width=(std::min)(440,W(work)-16);gPopup.height=(std::min)(176,H(work)-16);
     if(gPopup.width<340)gPopup.width=(std::max)(280,W(work));
     int x=gPopup.anchorX,y=gPopup.anchorY;
     if(x+gPopup.width>work.right)x=work.right-gPopup.width;
@@ -1395,66 +1320,29 @@ static void ResizePopup() {
     SetWindowRgn(gPopup.hwnd,region,TRUE);
     InvalidateRect(gPopup.hwnd,nullptr,FALSE);
 }
-static void DrawPopupItem(HDC dc,int x,int y,int w,int h,const std::wstring& label,const wchar_t* glyph,bool hover,bool arrow=false,bool checked=false,bool danger=false) {
+static void DrawPopupItem(HDC dc,int x,int y,int w,int h,const std::wstring& label,const wchar_t* glyph,bool hover,bool danger=false) {
     if(hover)Round(dc,R(x+4,y,w-8,h-2),C_NAV_HOVER,C_NAV_HOVER,8);
     Round(dc,R(x+12,y+7,23,23),danger?C_AMBER_SOFT:C_ACCENT_SOFT,danger?C_RED:C_ACCENT_SOFT,7);
     Txt(dc,glyph,x+12,y+7,23,23,danger?C_RED:C_ACCENT,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-    Txt(dc,label,x+45,y,w-78,h-2,danger?C_RED:C_TEXT,gFont);
-    if(arrow)Txt(dc,L"›",x+w-30,y,18,h-2,C_MUTED,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-    if(checked)Txt(dc,L"✓",x+w-31,y,18,h-2,C_GREEN,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    Txt(dc,label,x+45,y,w-58,h-2,danger?C_RED:C_TEXT,gFont);
 }
-static int PopupMainRow(int y){return (y-10)/38;}
-static int PopupSubRow(int y){return gPopup.scroll+(y-50)/32;}
+static int PopupMainRow(int y){if(y>=10&&y<48)return 0;if(y>=68&&y<106)return 1;return -1;}
 static void ClosePopup(){if(gPopup.hwnd)DestroyWindow(gPopup.hwnd);}
-static void ApplyPopupCommand(int kind,int index) {
+static void ApplyPopupCommand(int index) {
     ProcRow* p=FindProcess(gPopup.pid);if(!p){ClosePopup();return;}
-    if(kind==0){
-        if(index==0){
-            if(p->path.empty()||p->path==L"Path unavailable"){gStatus=L"Executable path is unavailable.";}
-            else {std::wstring params=L"/select,\""+p->path+L"\"";ShellExecuteW(nullptr,L"open",L"explorer.exe",params.c_str(),nullptr,SW_SHOWNORMAL);gStatus=L"Opened the process location.";}
-            ClosePopup();
-        }else if(index==5){
-            DWORD pid=p->pid;std::wstring name=p->name;ClosePopup();
-            if(pid==GetCurrentProcessId()){gStatus=L"N-Lite cannot end itself.";InvalidateRect(gWnd,nullptr,FALSE);return;}
-            if(MessageBoxW(gWnd,(L"End "+name+L"? Unsaved work in that process can be lost.").c_str(),L"End task",MB_YESNO|MB_ICONWARNING)==IDYES){
-                HANDLE h=OpenProcess(PROCESS_TERMINATE,FALSE,pid);
-                if(h&&TerminateProcess(h,1))gStatus=L"End task requested for "+name+L".";else gStatus=L"Windows denied permission to end this process.";
-                if(h)CloseHandle(h);RefreshProcesses();
-            }
-            InvalidateRect(gWnd,nullptr,FALSE);
+    if(index==0){
+        if(p->path.empty()||p->path==L"Path unavailable"){gStatus=L"Executable path is unavailable.";}
+        else {std::wstring params=L"/select,\""+p->path+L"\"";ShellExecuteW(nullptr,L"open",L"explorer.exe",params.c_str(),nullptr,SW_SHOWNORMAL);gStatus=L"Opened the process location.";}
+        ClosePopup();
+    }else if(index==1){
+        DWORD pid=p->pid;std::wstring name=p->name;ClosePopup();
+        if(pid==GetCurrentProcessId()){gStatus=L"N-Lite cannot end itself.";InvalidateRect(gWnd,nullptr,FALSE);return;}
+        if(MessageBoxW(gWnd,(L"End "+name+L"? Unsaved work in that process can be lost.").c_str(),L"End task",MB_YESNO|MB_ICONWARNING)==IDYES){
+            HANDLE h=OpenProcess(PROCESS_TERMINATE,FALSE,pid);
+            if(h&&TerminateProcess(h,1))gStatus=L"End task requested for "+name+L".";else gStatus=L"Windows denied permission to end this process.";
+            if(h)CloseHandle(h);RefreshProcesses();
         }
-    }else if(kind==1){
-        static const DWORD cls[]={IDLE_PRIORITY_CLASS,BELOW_NORMAL_PRIORITY_CLASS,NORMAL_PRIORITY_CLASS,ABOVE_NORMAL_PRIORITY_CLASS,HIGH_PRIORITY_CLASS};
-        if(index<0||index>=5)return;
-        HANDLE h=OpenProcess(PROCESS_SET_INFORMATION|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,p->pid);
-        bool applied=h&&SetPriorityClass(h,cls[index]);
-        if(applied){
-            if(WriteProcessDword(L"Priority",p->path,cls[index]))gStatus=L"Priority saved for future instances of "+p->name+L".";
-            else gStatus=L"Priority changed, but N-Lite could not save it.";
-        }else gStatus=L"Windows denied the priority change.";
-        if(h)CloseHandle(h);ClosePopup();RefreshProcesses();InvalidateRect(gWnd,nullptr,FALSE);
-    }else if(kind==2){
-        DWORD_PTR procMask=0,sysMask=0;if(!GetAffinity(p->pid,procMask,sysMask))return;
-        int core=0,seen=0;
-        for(;core<static_cast<int>(sizeof(DWORD_PTR)*8);core++)if(sysMask&(static_cast<DWORD_PTR>(1)<<core)){if(seen++==index)break;}
-        if(core>=static_cast<int>(sizeof(DWORD_PTR)*8))return;
-        DWORD_PTR bit=static_cast<DWORD_PTR>(1)<<core,next=procMask^bit;
-        HANDLE h=OpenProcess(PROCESS_SET_INFORMATION|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,p->pid);
-        if(h&&next&&SetProcessAffinityMask(h,next)){
-            if(WriteProcessQword(L"Affinity",p->path,static_cast<uint64_t>(next)))gStatus=L"CPU affinity saved for future instances of "+p->name+L".";
-            else gStatus=L"CPU affinity changed, but N-Lite could not save it.";
-        }else gStatus=L"Keep at least one CPU selected; Windows may also deny the change.";
-        if(h)CloseHandle(h);InvalidateRect(gWnd,nullptr,FALSE);if(gPopup.hwnd)InvalidateRect(gPopup.hwnd,nullptr,FALSE);
-    }else if(kind==3){
-        if(index==0||index==1){
-            if(SetGpuPreference(p->path,index==0))gStatus=L"Windows GPU preference saved. Relaunch the process to apply it.";
-            else gStatus=L"Could not save a GPU preference for this process.";
-        }else if(index==2&&p->path!=L"Path unavailable"){
-            HKEY k;if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\DirectX\\UserGpuPreferences",0,KEY_SET_VALUE,&k)==ERROR_SUCCESS){
-                RegDeleteValueW(k,p->path.c_str());RegCloseKey(k);gStatus=L"Windows GPU preference reset to default.";
-            }
-        }
-        ClosePopup();InvalidateRect(gWnd,nullptr,FALSE);
+        InvalidateRect(gWnd,nullptr,FALSE);
     }
 }
 static LRESULT CALLBACK PopupWndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
@@ -1462,100 +1350,36 @@ static LRESULT CALLBACK PopupWndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
     case WM_ERASEBKGND:return 1;
     case WM_KILLFOCUS:DestroyWindow(h);return 0;
     case WM_KEYDOWN:if(wp==VK_ESCAPE){DestroyWindow(h);return 0;}break;
-    case WM_MOUSEWHEEL:
-        if(gPopup.subKind==2){
-            int count=0;DWORD_PTR pm=0,sm=0;if(GetAffinity(gPopup.pid,pm,sm))for(int i=0;i<static_cast<int>(sizeof(DWORD_PTR)*8);i++)if(sm&(static_cast<DWORD_PTR>(1)<<i))count++;
-            int rows=(std::max)(1,(gPopup.height-60)/32),maxScroll=(std::max)(0,count-rows);
-            gPopup.scroll=(std::max)(0,(std::min)(maxScroll,gPopup.scroll-(GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA)*3));
-            InvalidateRect(h,nullptr,FALSE);
-        }return 0;
     case WM_MOUSEMOVE:{
-        int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp),oldKind=gPopup.subKind,oldMain=gPopup.hoverMain,oldSub=gPopup.hoverSub;
-        if(x<246){
-            int row=PopupMainRow(y);gPopup.hoverMain=(y>=10&&row<6)?row:-1;
-            if(row==1&&gPopup.hoverMain>=0)gPopup.subKind=1;
-            else if(row==2&&gPopup.hoverMain>=0)gPopup.subKind=2;
-            else if(row==3&&gPopup.hoverMain>=0)gPopup.subKind=3;
-            else gPopup.subKind=-1;
-            if(gPopup.subKind!=oldKind){gPopup.scroll=0;gPopup.hoverSub=-1;}
-        }else{
-            gPopup.hoverMain=-1;
-            if(gPopup.subKind>=0&&y>=50)gPopup.hoverSub=(y-50)/32;else gPopup.hoverSub=-1;
-        }
-        if(oldKind!=gPopup.subKind||oldMain!=gPopup.hoverMain||oldSub!=gPopup.hoverSub)InvalidateRect(h,nullptr,FALSE);
+        const int row=PopupMainRow(GET_Y_LPARAM(lp));
+        if(row!=gPopup.hoverMain){gPopup.hoverMain=row;InvalidateRect(h,nullptr,FALSE);}
         return 0;
     }
     case WM_LBUTTONUP:{
-        int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
-        if(x<246){
-            int row=PopupMainRow(y);
-            if(y>=10&&row==0)ApplyPopupCommand(0,0);
-            else if(y>=10&&row==5)ApplyPopupCommand(0,5);
-            else if(y>=10&&row>=1&&row<=3){gPopup.subKind=row;gPopup.scroll=0;gPopup.hoverSub=-1;InvalidateRect(h,nullptr,FALSE);}
-        }else if(gPopup.subKind>=0&&y>=50){
-            int row=PopupSubRow(y);
-            if(gPopup.subKind==1)ApplyPopupCommand(1,row);
-            else if(gPopup.subKind==2)ApplyPopupCommand(2,row);
-            else if(gPopup.subKind==3)ApplyPopupCommand(3,row);
-        }
+        const int row=PopupMainRow(GET_Y_LPARAM(lp));
+        if(row>=0)ApplyPopupCommand(row);
         return 0;
     }
     case WM_PAINT:{
         PAINTSTRUCT ps;HDC dc=BeginPaint(h,&ps);RECT cr;GetClientRect(h,&cr);
         HBRUSH b=CreateSolidBrush(C_PANEL);FillRect(dc,&cr,b);DeleteObject(b);
-        Line(dc,246,10,246,cr.bottom-10,C_LINE);
-        int mainRows=6;
-        for(int i=0;i<mainRows;i++){
-            int y=10+i*38;
-            if(i==4){Line(dc,13,y+17,233,y+17,C_LINE);continue;}
-            const wchar_t* glyph=i==0?L"↗":i==1?L"P":i==2?L"C":i==3?L"G":L"×";
-            std::wstring label=i==0?L"Open file location":i==1?L"Set priority":i==2?L"CPU affinity":i==3?L"GPU preference":L"End task";
-            DrawPopupItem(dc,0,y,246,37,label,glyph,gPopup.hoverMain==i,i>=1&&i<=3,gPopup.subKind==i,i==5);
-        }
+        Line(dc,224,10,224,cr.bottom-10,C_LINE);
+        DrawPopupItem(dc,0,10,224,38,L"Open file location",L"?",gPopup.hoverMain==0);
+        Line(dc,13,57,211,57,C_LINE);
+        DrawPopupItem(dc,0,68,224,38,L"End task",L"x",gPopup.hoverMain==1,true);
         ProcRow* p=FindProcess(gPopup.pid);
-        if(gPopup.subKind<0){
-            if(p){
-                auto group=std::find_if(gVisible.begin(),gVisible.end(),[&](const ProcRow& row){return row.groupHeader&&row.pid==gPopup.pid;});
-                const bool grouped=group!=gVisible.end();
-                HICON icon=GetProcessIcon(*p);if(icon)DrawIconEx(dc,270,24,icon,34,34,0,nullptr,DI_NORMAL);
-                Txt(dc,p->name,314,19,gPopup.width-334,25,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
-                Txt(dc,L"PID  "+std::to_wstring(p->pid),314,44,gPopup.width-334,18,C_MUTED,gFontSmall);
-                Line(dc,263,77,gPopup.width-14,77,C_LINE);
-                Txt(dc,grouped?L"Group working set":L"Working set",266,90,128,20,C_MUTED,gFontSmall);
-                Txt(dc,Bytes(grouped?group->treeWorking:p->working),394,90,gPopup.width-412,20,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-                Txt(dc,grouped?L"Group CPU usage":L"CPU usage",266,121,128,20,C_MUTED,gFontSmall);
-                Txt(dc,Percent(grouped?group->cpu:p->cpu),394,121,gPopup.width-412,20,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-                Txt(dc,L"Choose an action to see its options.",266,168,gPopup.width-286,36,C_MUTED,gFontSmall,DT_LEFT|DT_TOP|DT_WORDBREAK);
-            }else Txt(dc,L"Process is no longer running.",266,24,gPopup.width-282,30,C_MUTED,gFont);
-        }else{
-            const wchar_t* title=gPopup.subKind==1?L"Process priority":gPopup.subKind==2?L"CPU affinity":L"GPU preference";
-            Txt(dc,title,264,12,gPopup.width-278,25,C_TEXT,gFontMed);
-            Txt(dc,p?p->name:L"Process",264,33,gPopup.width-278,17,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
-            Line(dc,260,47,gPopup.width-12,47,C_LINE);
-            int count=0;
-            if(gPopup.subKind==1)count=5;
-            else if(gPopup.subKind==2){DWORD_PTR pm=0,sm=0;if(GetAffinity(gPopup.pid,pm,sm))for(int i=0;i<static_cast<int>(sizeof(DWORD_PTR)*8);i++)if(sm&(static_cast<DWORD_PTR>(1)<<i))count++;}
-            else count=3;
-            int rows=(std::max)(1,(gPopup.height-60)/32),begin=gPopup.subKind==2?gPopup.scroll:0,end=(std::min)(count,begin+rows);
-            DWORD_PTR pm=0,sm=0;if(gPopup.subKind==2)GetAffinity(gPopup.pid,pm,sm);
-            DWORD prio=0;HANDLE hp=p?OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,p->pid):nullptr;if(hp){prio=GetPriorityClass(hp);CloseHandle(hp);}
-            std::wstring pref=p?GpuPreference(p->path):L"";
-            for(int i=begin;i<end;i++){
-                int y=51+(i-begin)*32;std::wstring label;const wchar_t* glyph=L"•";bool checked=false;
-                if(gPopup.subKind==1){
-                    static const wchar_t* names[]={L"Idle",L"Below normal",L"Normal",L"Above normal",L"High"};
-                    static const DWORD classes[]={IDLE_PRIORITY_CLASS,BELOW_NORMAL_PRIORITY_CLASS,NORMAL_PRIORITY_CLASS,ABOVE_NORMAL_PRIORITY_CLASS,HIGH_PRIORITY_CLASS};
-                    label=names[i];checked=prio==classes[i];glyph=L"P";
-                }else if(gPopup.subKind==2){
-                    int core=0,seen=0;for(;core<static_cast<int>(sizeof(DWORD_PTR)*8);core++)if(sm&(static_cast<DWORD_PTR>(1)<<core)){if(seen++==i)break;}
-                    label=L"CPU "+std::to_wstring(core);checked=(pm&(static_cast<DWORD_PTR>(1)<<core))!=0;glyph=L"C";
-                }else{
-                    static const wchar_t* names[]={L"High performance",L"Power saving",L"Use Windows default"};
-                    label=names[i];checked=(i==0&&pref.find(L"=2")!=std::wstring::npos)||(i==1&&pref.find(L"=1")!=std::wstring::npos)||(i==2&&pref.empty());glyph=L"G";
-                }
-                DrawPopupItem(dc,248,y,gPopup.width-248,31,label,glyph,gPopup.hoverSub==i,false,checked);
-            }
-        }
+        if(p){
+            auto group=std::find_if(gVisible.begin(),gVisible.end(),[&](const ProcRow& row){return row.groupHeader&&row.pid==gPopup.pid;});
+            const bool grouped=group!=gVisible.end();
+            HICON icon=GetProcessIcon(*p);if(icon)DrawIconEx(dc,242,20,icon,32,32,0,nullptr,DI_NORMAL);
+            Txt(dc,p->name,282,17,gPopup.width-294,25,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+            Txt(dc,L"PID  "+std::to_wstring(p->pid),282,43,gPopup.width-294,18,C_MUTED,gFontSmall);
+            Line(dc,238,72,gPopup.width-14,72,C_LINE);
+            Txt(dc,grouped?L"Group working set":L"Working set",240,84,112,20,C_MUTED,gFontSmall);
+            Txt(dc,Bytes(grouped?group->treeWorking:p->working),352,84,gPopup.width-364,20,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+            Txt(dc,grouped?L"Group CPU usage":L"CPU usage",240,115,112,20,C_MUTED,gFontSmall);
+            Txt(dc,Percent(grouped?group->cpu:p->cpu),352,115,gPopup.width-364,20,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+        }else Txt(dc,L"Process is no longer running.",240,24,gPopup.width-256,30,C_MUTED,gFont);
         EndPaint(h,&ps);return 0;
     }
     case WM_DESTROY:if(gPopup.hwnd==h)gPopup.hwnd=nullptr;return 0;
@@ -1570,8 +1394,7 @@ static void OpenProcessPopup(DWORD pid,int sx,int sy) {
     if(!gPopup.hwnd)return;
     ResizePopup();ShowWindow(gPopup.hwnd,SW_SHOW);SetForegroundWindow(gPopup.hwnd);SetFocus(gPopup.hwnd);
     InvalidateRect(gWnd,nullptr,FALSE);
-}
-static void CommitThresholdEdit() {
+}static void CommitThresholdEdit() {
     if(!gThresholdFocus)return;
     wchar_t* end=nullptr;unsigned long n=std::wcstoul(gThresholdEdit.c_str(),&end,10);
     if(end&&end!=gThresholdEdit.c_str()&&*end==0&&n){
@@ -1584,8 +1407,9 @@ static void SaveToggleAuto() {
     if(gAutoPurge){gAutoPurge=false;SaveSettings();gStatus=L"Automatic standby cleaning disabled.";return;}
     gAutoPurge=true;
     SaveSettings();
+    gCleanerSetupBlocked=false;
     if(gCleanerInstalled&&gCleanerCurrentVersion)RequestCleanerTaskRun(false);
-    else if(!StartCleanerSetup(true,false)&&gCleanerInstalled){SaveSettings();RequestCleanerTaskRun(false);}
+    else StartCleanerSetup(true,false);
 }
 static void HandleClick(int x,int y,bool dbl) {
     Hit* target=nullptr;
@@ -1639,19 +1463,6 @@ static void HandleClick(int x,int y,bool dbl) {
         if(gTimerEnabled&&!gTimerActive)gStatus=L"Windows rejected the selected timer resolution.";
         else gStatus=L"Timer resolution saved.";
     }
-    else if(id==ID_END){
-        ProcRow* p=Selected();
-        if(p){
-            DWORD pid=p->pid;std::wstring name=p->name;
-            if(pid==GetCurrentProcessId())gStatus=L"N-Lite cannot end itself.";
-            else if(MessageBoxW(gWnd,(L"End "+name+L"? Unsaved work in that process can be lost.").c_str(),L"End task",MB_YESNO|MB_ICONWARNING)==IDYES){
-                HANDLE ph=OpenProcess(PROCESS_TERMINATE,FALSE,pid);
-                if(ph&&TerminateProcess(ph,1))gStatus=L"End task requested for "+name+L".";
-                else gStatus=L"Windows denied permission to end this process.";
-                if(ph)CloseHandle(ph);RefreshProcesses();
-            }
-        }
-    }
     else if(id==100||id==101){
         gSelectedPid=target->data;
         if((id==101&&!dbl)||(id==100&&dbl)){
@@ -1693,7 +1504,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
         gFontTitle=CreateFontW(-27,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
         AddTray(); SetTimer(h,TIMER_REFRESH,2200,nullptr); SetTimer(h,TIMER_UPDATE_CHECK,6u*60u*60u*1000u,nullptr); UpdateMetrics(); RefreshProcesses();
         ApplyWindowChromeTheme(h);
-        if(gAutoPurge&&!gCleanerCurrentVersion&&!StartCleanerSetup(true,false)&&gCleanerInstalled)RequestCleanerTaskRun(false);
+        if(gAutoPurge&&!gCleanerCurrentVersion&&!gCleanerSetupBlocked&&!StartCleanerSetup(true,false)&&gCleanerInstalled)RequestCleanerTaskRun(false);
         CheckForUpdatesAsync();
         return 0;
     }
@@ -1707,6 +1518,12 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
         if(wp==SIZE_MINIMIZED)HideToTray();else InvalidateRect(h,nullptr,FALSE);return 0;
     case WM_CLOSE:
         if(!gExiting){HideToTray();return 0;} DestroyWindow(h);return 0;
+    case WM_QUERYENDSESSION:
+        if((lp&ENDSESSION_CLOSEAPP)!=0)return TRUE;
+        return DefWindowProcW(h,msg,wp,lp);
+    case WM_ENDSESSION:
+        if(wp){gExiting=true;DestroyWindow(h);return 0;}
+        return DefWindowProcW(h,msg,wp,lp);
     case WM_TRAY:
         if(lp==WM_LBUTTONUP||lp==WM_LBUTTONDBLCLK)ShowWindowFromTray();
         else if(lp==WM_RBUTTONUP||lp==WM_CONTEXTMENU)ShowTrayMenu();
@@ -1832,8 +1649,10 @@ int WINAPI wWinMain(HINSTANCE inst,HINSTANCE, PWSTR cmd,int show) {
     WNDCLASSEXW pc{};pc.cbSize=sizeof(pc);pc.hInstance=inst;pc.lpfnWndProc=PopupWndProc;pc.lpszClassName=POPUP_CLASS;
     pc.hCursor=LoadCursorW(nullptr,IDC_ARROW);pc.hbrBackground=nullptr;pc.style=CS_DROPSHADOW;
     if(!RegisterClassExW(&pc))return 1;
+    gIcon=static_cast<HICON>(LoadImageW(inst,MAKEINTRESOURCEW(IDI_NLITE),IMAGE_ICON,32,32,LR_DEFAULTCOLOR));
+    if(!gIcon)gIcon=MakeIcon();
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=inst;wc.lpfnWndProc=WndProc;wc.lpszClassName=APP_CLASS;
-    wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.hIcon=LoadIconW(nullptr,IDI_APPLICATION);wc.hIconSm=wc.hIcon;
+    wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.hIcon=gIcon;wc.hIconSm=gIcon;
     wc.hbrBackground=nullptr;wc.style=CS_DBLCLKS;
     if(!RegisterClassExW(&wc))return 1;
     HWND h=CreateWindowExW(0,APP_CLASS,L"N Lite",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,830,nullptr,nullptr,inst,nullptr);

@@ -30,6 +30,32 @@ int main() {
     Check(!IsValidCleanerSid(L"S-1-5-21-100-200-300-1001\\.."), "sid_path_injection_is_rejected");
     Check(!IsValidCleanerSid(L"S-1-5-21-100-200-300-"), "sid_trailing_separator_is_rejected");
 
+    Check(HasExpectedCleanerTaskSecurityDescriptor(
+        L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GXGR;;;BU)"),
+        "task_acl_accepts_windows_sddl_aliases_and_normalized_right_order");
+    Check(HasExpectedCleanerTaskSecurityDescriptor(
+        L"O:S-1-5-32-544G:S-1-5-32-544D:P(A;;FA;;;S-1-5-18)(A;;FA;;;S-1-5-32-544)(A;;GRGX;;;S-1-5-32-545)"),
+        "task_acl_accepts_sid_strings_from_security_descriptor");
+    Check(!HasExpectedCleanerTaskSecurityDescriptor(
+        L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;BU)"),
+        "task_acl_rejects_user_full_control");
+    Check(!HasExpectedCleanerTaskSecurityDescriptor(
+        L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)(A;;FA;;;WD)"),
+        "task_acl_rejects_unexpected_extra_access");
+    Check(!HasExpectedCleanerTaskSecurityDescriptor(
+        L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;CI;GRGX;;;BU)"),
+        "task_acl_rejects_inheritable_task_access");
+    Check(!HasExpectedCleanerTaskSecurityDescriptor(
+        L"O:BAG:BAD:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)"),
+        "task_acl_rejects_auto_inherited_dacl_flags");
+
+    SystemMemoryListInfo memoryLists{};
+    memoryLists.standby[0] = 2;
+    memoryLists.standby[7] = 3;
+    Check(sizeof(memoryLists) == 88, "system_memory_list_information_uses_fixed_32_bit_fields");
+    Check(StandbyBytesFromPageCounts(memoryLists, 4096) == 5u * 4096u,
+        "standby_bytes_sum_all_eight_priority_buckets");
+
     CleanerSettings settings{true, 64, 7200, 7};
     const std::wstring settingsText = SerializeCleanerSettings(settings);
     CleanerSettings parsed{};
