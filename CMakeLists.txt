@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(NLite LANGUAGES CXX RC)
 
-set(NLITE_VERSION "0.2.6" CACHE STRING "N-Lite application version")
+set(NLITE_VERSION "0.2.7" CACHE STRING "N-Lite application version")
 set(NLITE_CLEANER_VERSION "1" CACHE STRING "Protected cleaner helper version")
 
 add_executable(N-Lite WIN32 src/main.cpp src/startup_manager.cpp)
@@ -11,7 +11,7 @@ configure_file(src/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app_resources.rc" @ONL
 target_sources(N-Lite PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app_resources.rc")
 target_compile_features(N-Lite PRIVATE cxx_std_17)
 target_compile_definitions(N-Lite PRIVATE UNICODE _UNICODE NLITE_VERSION="${NLITE_VERSION}" NLITE_CLEANER_VERSION="${NLITE_CLEANER_VERSION}")
-target_link_libraries(N-Lite PRIVATE psapi shell32 advapi32 comctl32 comdlg32 winmm dwmapi shlwapi winhttp)
+target_link_libraries(N-Lite PRIVATE psapi shell32 advapi32 comctl32 comdlg32 winmm dwmapi shlwapi winhttp ole32 oleaut32 taskschd)
 set_property(TARGET N-Lite PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 if(MSVC)
@@ -39,4 +39,10 @@ if(BUILD_TESTING)
   target_compile_features(N-Lite-logic-tests PRIVATE cxx_std_17)
   target_include_directories(N-Lite-logic-tests PRIVATE src)
   add_test(NAME N-Lite-logic-tests COMMAND N-Lite-logic-tests)
+
+  add_executable(N-Lite-startup-tests tests/startup_manager_windows_tests.cpp src/startup_manager.cpp)
+  target_compile_features(N-Lite-startup-tests PRIVATE cxx_std_17)
+  target_include_directories(N-Lite-startup-tests PRIVATE src)
+  target_link_libraries(N-Lite-startup-tests PRIVATE advapi32 shell32 comdlg32 ole32 oleaut32 taskschd)
+  add_test(NAME N-Lite-startup-tests COMMAND N-Lite-startup-tests)
 endif()

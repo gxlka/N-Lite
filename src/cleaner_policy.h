@@ -248,3 +248,15 @@ inline bool ShouldRunAutoClean(const CleanerSettings& settings, uint64_t standby
     return lastTick == 0 || nowTick < lastTick || nowTick - lastTick >=
         static_cast<uint64_t>(settings.intervalSeconds) * 1000u;
 }
+
+enum class CleanerBadgeState { Off, On, SetupNeeded, UpdateNeeded, SettingUp };
+
+inline constexpr bool kAutoCleanDefaultEnabled = false;
+
+inline CleanerBadgeState CleanerBadgeFor(bool autoEnabled, bool setupBusy,
+    bool helperCurrent, bool helperInstalled) {
+    if (setupBusy) return CleanerBadgeState::SettingUp;
+    if (!autoEnabled) return CleanerBadgeState::Off;
+    if (helperCurrent) return CleanerBadgeState::On;
+    return helperInstalled ? CleanerBadgeState::UpdateNeeded : CleanerBadgeState::SetupNeeded;
+}
