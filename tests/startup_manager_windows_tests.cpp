@@ -106,12 +106,14 @@ int main() {
         "startup_bin_deletes_only_the_user_run_entry");
     runKey=nullptr;approvalKey=nullptr;
     if(RegOpenKeyExW(HKEY_CURRENT_USER,runPath,0,KEY_QUERY_VALUE|KEY_WOW64_64KEY,&runKey)==ERROR_SUCCESS){
-        const LONG remains=RegQueryValueExW(runKey,deleteValue,nullptr,nullptr,nullptr,nullptr);
+        DWORD remainsSize=0;
+        const LONG remains=RegQueryValueExW(runKey,deleteValue,nullptr,nullptr,nullptr,&remainsSize);
         RegCloseKey(runKey);
         ok &= Check(remains==ERROR_FILE_NOT_FOUND,"startup_bin_removes_the_run_value");
     }else ok &= Check(false,"startup_bin_removes_the_run_value");
     if(RegOpenKeyExW(HKEY_CURRENT_USER,approvalPath,0,KEY_QUERY_VALUE|KEY_WOW64_64KEY,&approvalKey)==ERROR_SUCCESS){
-        const LONG remains=RegQueryValueExW(approvalKey,deleteValue,nullptr,nullptr,nullptr,nullptr);
+        DWORD remainsSize=0;
+        const LONG remains=RegQueryValueExW(approvalKey,deleteValue,nullptr,nullptr,nullptr,&remainsSize);
         RegCloseKey(approvalKey);
         ok &= Check(remains==ERROR_FILE_NOT_FOUND,"startup_bin_cleans_matching_approval_state");
     }else ok &= Check(false,"startup_bin_cleans_matching_approval_state");
