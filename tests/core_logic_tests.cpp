@@ -56,6 +56,13 @@ int main() {
     Check(StartupValueNameForPath(L"C:\\Other\\photo editor.EXE", {L"photo editor"}) == L"photo editor (2)",
         "startup_app_name_avoids_case_insensitive_registry_collision");
 
+    Check(DecideCleanerSetup(true, true) == CleanerSetupAction::Ready,
+        "persisted_cleaner_setup_with_current_helper_skips_admin_setup");
+    Check(DecideCleanerSetup(true, false) == CleanerSetupAction::Update,
+        "persisted_cleaner_setup_with_old_helper_requests_one_update");
+    Check(DecideCleanerSetup(false, true) == CleanerSetupAction::Install,
+        "missing_cleaner_setup_marker_requests_install");
+
     Check(IsValidCleanerSid(L"S-1-5-21-100-200-300-1001"), "valid_user_sid_is_accepted");
     Check(!IsValidCleanerSid(L"S-1-5-21-100-200-300-1001\\.."), "sid_path_injection_is_rejected");
     Check(!IsValidCleanerSid(L"S-1-5-21-100-200-300-"), "sid_trailing_separator_is_rejected");

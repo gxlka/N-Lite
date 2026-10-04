@@ -6,6 +6,17 @@
 #include <string>
 #include <unordered_map>
 
+enum class CleanerSetupAction {
+    Install,
+    Update,
+    Ready
+};
+
+inline CleanerSetupAction DecideCleanerSetup(bool registrationMarkerValid, bool helperVersionCurrent) {
+    if (!registrationMarkerValid) return CleanerSetupAction::Install;
+    return helperVersionCurrent ? CleanerSetupAction::Ready : CleanerSetupAction::Update;
+}
+
 struct CleanerSettings {
     bool enabled = false;
     uint32_t thresholdMb = 4096;

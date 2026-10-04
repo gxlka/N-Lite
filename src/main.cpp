@@ -516,21 +516,39 @@ static bool ReadCleanerStatus(CleanerStatus& status) {
     std::wstring text;
     return ReadCleanerText(CleanerStatusFile(), text) && ParseCleanerStatus(text, status);
 }
+static bool ReadCleanerHelperVersion(std::wstring& version) {
+    if (gCleanerRoot.empty() || !ReadCleanerText(gCleanerRoot + L"\\helper-version.txt", version)) return false;
+    while (!version.empty() && (version.back() == L'\r' || version.back() == L'\n' ||
+            version.back() == L' ' || version.back() == L'\t')) version.pop_back();
+    size_t first = 0;
+    while (first < version.size() && (version[first] == L' ' || version[first] == L'\t' ||
+            version[first] == L'\r' || version[first] == L'\n')) ++first;
+    if (first) version.erase(0, first);
+    if (version.empty()) return false;
+    for (wchar_t ch : version) if (ch < L'0' || ch > L'9') return false;
+    return true;
+}
 static bool CleanerRegistrationValid() {
     if (gCleanerRoot.empty() || gUserSid.empty()) return false;
     DWORD helper = GetFileAttributesW((gCleanerRoot + L"\\N-Lite-Cleaner.exe").c_str());
-    std::wstring configText, statusText;
+    std::wstring configText, statusText, helperVersion;
     CleanerSettings settings; CleanerStatus status;
     return helper != INVALID_FILE_ATTRIBUTES && !(helper & (FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY)) &&
         ReadCleanerText(CleanerSettingsFile(), configText) && ParseCleanerSettings(configText, settings) &&
         ReadCleanerText(CleanerStatusFile(), statusText) && ParseCleanerStatus(statusText, status) &&
-        RunSchtasks({L"/Query", L"/TN", L"N-Lite Cleaner " + gUserSid});
+        ReadCleanerHelperVersion(helperVersion);
 }
 static bool CleanerHelperCurrent() {
     std::wstring version;
-    if (gCleanerRoot.empty() || !ReadCleanerText(gCleanerRoot + L"\\helper-version.txt", version)) return false;
-    while (!version.empty() && (version.back() == L'\r' || version.back() == L'\n' || version.back() == L' ')) version.pop_back();
-    return version == CLEANER_VERSION;
+    return ReadCleanerHelperVersion(version) && version == CLEANER_VERSION;
+}
+static void RefreshCleanerSetupState() {
+    const bool registrationValid = CleanerRegistrationValid();
+    const CleanerSetupAction action = DecideCleanerSetup(
+        registrationValid, registrationValid && CleanerHelperCurrent());
+    gCleanerInstalled = action != CleanerSetupAction::Install;
+    gCleanerCurrentVersion = action == CleanerSetupAction::Ready;
+    gAutoTaskReady = gCleanerInstalled;
 }
 static void SaveSettings() {
     RegWriteDword(L"AutoPurge",gAutoPurge?1:0); RegWriteDword(L"ThresholdMB",gThresholdMB); RegWriteDword(L"IntervalSec",gIntervalSec);
@@ -547,9 +565,7 @@ static void LoadSettings() {
     v=5000; RegReadDword(L"TimerResolution100ns",v); gTimerResolution=v;
     v=0; RegReadDword(L"AutoTaskReady",v); gAutoTaskReady=v!=0;
     v=1; RegReadDword(L"ThemeDark",v); gDarkTheme=v!=0; ApplyThemeColors();
-    gCleanerInstalled = CleanerRegistrationValid();
-    gCleanerCurrentVersion = gCleanerInstalled && CleanerHelperCurrent();
-    gAutoTaskReady = gCleanerInstalled;
+    RefreshCleanerSetupState();
     if (gCleanerInstalled) {
         std::wstring text; CleanerSettings settings;
         if (ReadCleanerText(CleanerSettingsFile(), text) && ParseCleanerSettings(text, settings)) {
@@ -750,7 +766,8 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
     return true;
 }
 static bool RequestCleanerTaskRun(bool manual) {
-    if (!gCleanerInstalled) return StartCleanerSetup(gAutoPurge, manual);
+    if (DecideCleanerSetup(gCleanerInstalled, gCleanerCurrentVersion) != CleanerSetupAction::Ready)
+        return StartCleanerSetup(gAutoPurge, manual);
     if (manual && !gManualCleanerPending) {
         if (gCleanerRequestId == (std::numeric_limits<uint64_t>::max)()) {
             gStatus = L"Could not create a new cleaner request. Restart N-Lite and try again.";
@@ -778,9 +795,7 @@ static void PollCleanerSetup() {
     gCleanerSetupProcess = nullptr;
     const bool forAuto = gCleanerSetupForAuto, forManual = gCleanerSetupForManual;
     gCleanerSetupForAuto = false; gCleanerSetupForManual = false;
-    gCleanerInstalled = CleanerRegistrationValid();
-    gCleanerCurrentVersion = gCleanerInstalled && CleanerHelperCurrent();
-    gAutoTaskReady = gCleanerInstalled;
+    RefreshCleanerSetupState();
     RegWriteDword(L"AutoTaskReady", gCleanerInstalled ? 1 : 0);
     if (!gCleanerInstalled || !gCleanerCurrentVersion || result != 0) {
         gCleanerSetupBlocked=true;
