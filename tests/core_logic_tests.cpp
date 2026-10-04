@@ -75,6 +75,19 @@ int main() {
     Check(DecideCleanerSetup(false, true) == CleanerSetupAction::Install,
         "missing_cleaner_setup_marker_requests_install");
 
+    Check(CanUseRegisteredCleanerTask(true, true, false) &&
+        CanUseRegisteredCleanerTask(true, false, true) &&
+        !CanUseRegisteredCleanerTask(true, false, false) &&
+        !CanUseRegisteredCleanerTask(false, false, true),
+        "registered_cleaner_remains_runnable_after_failed_update");
+    Check(ShouldSuppressCleanerUpdateRetry(true, false, 2, 2) &&
+        !ShouldSuppressCleanerUpdateRetry(true, false, 2, 1) &&
+        !ShouldSuppressCleanerUpdateRetry(true, true, 2, 2) &&
+        !ShouldSuppressCleanerUpdateRetry(false, false, 2, 2),
+        "failed_helper_update_is_suppressed_only_for_installed_same_version");
+    Check(CleanerBadgeFor(true, false, false, true, true) == CleanerBadgeState::On,
+        "cleaner_badge_shows_active_when_using_registered_fallback");
+
     const std::vector<uint8_t> approvalEnabled{2, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     const std::vector<uint8_t> approvalDisabled{3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     Check(ParseStartupApprovalState(approvalEnabled) == StartupApprovalState::Enabled &&

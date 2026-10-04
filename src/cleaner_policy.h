@@ -25,6 +25,17 @@ inline CleanerSetupAction DecideCleanerSetup(bool registrationMarkerValid, bool 
     return helperVersionCurrent ? CleanerSetupAction::Ready : CleanerSetupAction::Update;
 }
 
+inline bool CanUseRegisteredCleanerTask(bool helperInstalled, bool helperCurrent,
+                                        bool setupBlocked) {
+    return helperInstalled && (helperCurrent || setupBlocked);
+}
+
+inline bool ShouldSuppressCleanerUpdateRetry(bool helperInstalled, bool helperCurrent,
+                                             uint32_t currentVersion, uint32_t failedVersion) {
+    return helperInstalled && !helperCurrent && currentVersion != 0 &&
+        currentVersion == failedVersion;
+}
+
 struct CleanerSettings {
     bool enabled = false;
     uint32_t thresholdMb = 4096;
@@ -268,9 +279,9 @@ enum class CleanerBadgeState { Off, On, SetupNeeded, UpdateNeeded, SettingUp };
 inline constexpr bool kAutoCleanDefaultEnabled = false;
 
 inline CleanerBadgeState CleanerBadgeFor(bool autoEnabled, bool setupBusy,
-    bool helperCurrent, bool helperInstalled) {
+    bool helperCurrent, bool helperInstalled, bool setupBlocked = false) {
     if (setupBusy) return CleanerBadgeState::SettingUp;
     if (!autoEnabled) return CleanerBadgeState::Off;
-    if (helperCurrent) return CleanerBadgeState::On;
+    if (helperCurrent || (helperInstalled && setupBlocked)) return CleanerBadgeState::On;
     return helperInstalled ? CleanerBadgeState::UpdateNeeded : CleanerBadgeState::SetupNeeded;
 }
