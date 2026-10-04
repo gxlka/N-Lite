@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(NLite LANGUAGES CXX RC)
 
-set(NLITE_VERSION "0.2.7" CACHE STRING "N-Lite application version")
+set(NLITE_VERSION "0.2.8" CACHE STRING "N-Lite application version")
 set(NLITE_CLEANER_VERSION "1" CACHE STRING "Protected cleaner helper version")
 
 add_executable(N-Lite WIN32 src/main.cpp src/startup_manager.cpp)

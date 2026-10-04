@@ -57,6 +57,17 @@ int main() {
     Check(StartupValueNameForPath(L"C:\\Other\\photo editor.EXE", {L"photo editor"}) == L"photo editor (2)",
         "startup_app_name_avoids_case_insensitive_registry_collision");
 
+    CleanerSettings malformedCleanerSettings;
+    CleanerStatus malformedCleanerStatus;
+    Check(!ParseCleanerSettings(L"", malformedCleanerSettings) &&
+        !ParseCleanerStatus(L"", malformedCleanerStatus) &&
+        HasProtectedCleanerRegistration(true, true, true, true) &&
+        DecideCleanerSetup(HasProtectedCleanerRegistration(true, true, true, true), true) ==
+            CleanerSetupAction::Ready,
+        "malformed_runtime_file_contents_do_not_trigger_cleaner_setup_prompt");
+    Check(!HasProtectedCleanerRegistration(true, true, true, false) &&
+        !HasProtectedCleanerRegistration(true, false, true, true),
+        "cleaner_setup_requires_status_file_and_protected_completion_marker");
     Check(DecideCleanerSetup(true, true) == CleanerSetupAction::Ready,
         "persisted_cleaner_setup_with_current_helper_skips_admin_setup");
     Check(DecideCleanerSetup(true, false) == CleanerSetupAction::Update,

@@ -12,6 +12,16 @@ enum class CleanerSetupAction {
     Ready
 };
 
+// The protected marker proves setup completed; mutable per-user files only need to exist.
+// Their contents can be temporarily unreadable while the scheduled helper is updating status.
+inline bool HasProtectedCleanerRegistration(bool cleanerHelperPresent,
+                                            bool helperVersionMarkerValid,
+                                            bool perUserSettingsFilePresent,
+                                            bool perUserStatusFilePresent) {
+    return cleanerHelperPresent && helperVersionMarkerValid && perUserSettingsFilePresent &&
+        perUserStatusFilePresent;
+}
+
 inline CleanerSetupAction DecideCleanerSetup(bool registrationMarkerValid, bool helperVersionCurrent) {
     if (!registrationMarkerValid) return CleanerSetupAction::Install;
     return helperVersionCurrent ? CleanerSetupAction::Ready : CleanerSetupAction::Update;
