@@ -36,6 +36,10 @@ inline bool ShouldSuppressCleanerUpdateRetry(bool helperInstalled, bool helperCu
         currentVersion == failedVersion;
 }
 
+inline bool ShouldBlockCleanerSetupRetry(bool setupBlocked, bool manualRequest) {
+    return setupBlocked && !manualRequest;
+}
+
 struct CleanerSettings {
     bool enabled = false;
     uint32_t thresholdMb = 4096;
@@ -265,6 +269,12 @@ inline std::wstring SerializeCleanerStatus(const CleanerStatus& status) {
         L"\nlast_auto_tick=" + std::to_wstring(status.lastAutoTick) +
         L"\nlast_auto_status=" + std::to_wstring(static_cast<uint32_t>(status.lastAutoStatus)) +
         L"\nauto_armed=" + std::to_wstring(status.autoArmed ? 1 : 0) + L"\n";
+}
+
+inline bool StandbyCleanSucceeded(int32_t status, uint64_t beforeBytes, uint64_t afterBytes,
+                                  uint64_t pageSize) {
+    return status >= 0 && beforeBytes > afterBytes &&
+        (pageSize == 0 || beforeBytes - afterBytes >= pageSize);
 }
 
 inline bool ManualRequestCompleted(uint64_t requestId, uint64_t completedRequestId) {

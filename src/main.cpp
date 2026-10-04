@@ -146,6 +146,11 @@ static uint64_t gCleanerRequestId = 0;
 static uint64_t gLastDisplayedManualRequestId = 0;
 static CleanerStatus gCleanerStatus;
 static bool gManualCleanerPending = false;
+static uint64_t gManualStandbyBefore = 0;
+enum class CleanerNoticeKind : uint8_t { Info, Success, Failure };
+static std::wstring gCleanerNotification;
+static ULONGLONG gCleanerNotificationUntil = 0;
+static CleanerNoticeKind gCleanerNotificationKind = CleanerNoticeKind::Info;
 static unsigned gThresholdMB = 4096, gIntervalSec = 60;
 static ULONG gTimerResolution=5000, gTimerApplied=5000, gTimerMinResolution=5000, gTimerMaxResolution=156250;
 static DWORD gLastRefresh = 0;
@@ -154,6 +159,13 @@ static bool gPurgeLatched = false;
 static std::wstring gExePath;
 static DWORD gPageSize = 4096;
 static HANDLE gMutex = nullptr;
+
+static void ShowCleanerNotification(const std::wstring& message, CleanerNoticeKind kind) {
+    gCleanerNotification = message;
+    gCleanerNotificationKind = kind;
+    gCleanerNotificationUntil = GetTickCount64() + 6000;
+    if (gWnd) InvalidateRect(gWnd, nullptr, FALSE);
+}
 
 static void ApplyThemeColors() {
     const UiPalette p = PaletteFor(gDarkTheme);
@@ -782,32 +794,29 @@ static std::wstring PackagedCleanerPath() {
 }
 static bool RequestCleanerTaskRun(bool manual);
 static bool StartCleanerSetup(bool forAuto, bool forManual) {
-    if (gCleanerSetupBlocked) {
-        gStatus = gCleanerInstalled ?
-            L"Cleaner update did not finish. The existing cleaner is still available." :
-            L"Cleaner setup did not finish. Restart N-Lite to retry setup.";
+    if (ShouldBlockCleanerSetupRetry(gCleanerSetupBlocked, forManual)) {
         return false;
     }
     gCleanerSetupForAuto = gCleanerSetupForAuto || forAuto;
     gCleanerSetupForManual = gCleanerSetupForManual || forManual;
     if (gCleanerSetupProcess && WaitForSingleObject(gCleanerSetupProcess, 0) == WAIT_TIMEOUT) {
-        gStatus = L"Finishing the one-time standby cleaner setup.";
+        gStatus = L"Ready";
         return true;
     }
     if (gCleanerSetupProcess) { CloseHandle(gCleanerSetupProcess); gCleanerSetupProcess = nullptr; }
     if (gUserSid.empty()) {
         BlockCleanerSetup();
         gCleanerSetupForAuto=false;gCleanerSetupForManual=false;
-        gStatus = L"Could not identify this Windows account for cleaner setup."; return false;
+        gStatus = L"Ready";
+        if (forManual) ShowCleanerNotification(L"Clean failed: Windows account unavailable", CleanerNoticeKind::Failure);
+        return false;
     }
     const std::wstring helper = PackagedCleanerPath();
     DWORD attributes = GetFileAttributesW(helper.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
         BlockCleanerSetup();
         gCleanerSetupForAuto=false;gCleanerSetupForManual=false;
-        gStatus = gCleanerInstalled ?
-            L"Cleaner update file is missing; the existing cleaner remains available." :
-            L"N-Lite-Cleaner.exe is missing. Reinstall N-Lite to restore the cleaner.";
+        gStatus = L"Ready";
         if (gCleanerInstalled && (forManual || gAutoPurge)) {
             const bool started = RequestCleanerTaskRun(forManual);
             if (started) gStatus = forManual ?
@@ -815,6 +824,7 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
                 L"Auto Clean is using the existing cleaner; the update file is missing.";
             return started;
         }
+        if (forManual && !gCleanerInstalled) ShowCleanerNotification(L"Clean failed: cleaner could not start", CleanerNoticeKind::Failure);
         return false;
     }
     std::wstring parameters = L"--install " + gUserSid;
@@ -832,11 +842,7 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
         BlockCleanerSetup();
         gCleanerSetupForAuto = false;
         gCleanerSetupForManual = false;
-        gStatus = error == ERROR_CANCELLED ?
-            (gCleanerInstalled ? L"Cleaner update was cancelled; the existing cleaner remains available." :
-                L"Cleaner setup was cancelled. N-Lite stayed unelevated.") :
-            (gCleanerInstalled ? L"Could not start the cleaner update; the existing cleaner remains available." :
-                L"Could not start the one-time cleaner setup.");
+        gStatus = L"Ready";
         if (gCleanerInstalled && (forManual || gAutoPurge)) {
             const bool started = RequestCleanerTaskRun(forManual);
             if (started) gStatus = forManual ?
@@ -844,10 +850,13 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
                 L"Auto Clean is using the existing cleaner; the update was skipped.";
             return started;
         }
+        if (forManual && !gCleanerInstalled) ShowCleanerNotification(
+            error == ERROR_CANCELLED ? L"Clean failed: request was cancelled" : L"Clean failed: cleaner could not start",
+            CleanerNoticeKind::Failure);
         return false;
     }
     gCleanerSetupProcess = execute.hProcess;
-    gStatus = L"Approve the one-time Windows prompt to enable standby cleaning.";
+    gStatus = L"Ready";
     return true;
 }
 static bool RequestCleanerTaskRun(bool manual) {
@@ -855,27 +864,35 @@ static bool RequestCleanerTaskRun(bool manual) {
         return StartCleanerSetup(gAutoPurge, manual);
     if (manual && !gManualCleanerPending) {
         if (gCleanerRequestId == (std::numeric_limits<uint64_t>::max)()) {
-            gStatus = L"Could not create a new cleaner request. Restart N-Lite and try again.";
+            gStatus = L"Ready";
+            ShowCleanerNotification(L"Clean failed: could not create a request", CleanerNoticeKind::Failure);
             return false;
         }
         ++gCleanerRequestId;
         gManualCleanerPending = true;
         gLastDisplayedManualRequestId = gCleanerRequestId - 1;
     }
-    if (!WriteCleanerSettings()) return false;
-    const std::wstring task = L"N-Lite Cleaner " + gUserSid;
-    if (!RunSchtasks({L"/Run", L"/TN", task})) {
-        gStatus = manual ? L"Cleaner request queued; Windows has not started the task yet." :
-            L"Could not start the automatic cleaner task.";
+    if (!WriteCleanerSettings()) {
+        if (manual) {
+            gManualCleanerPending = false;
+            ShowCleanerNotification(L"Clean failed: could not save the request", CleanerNoticeKind::Failure);
+        }
         return false;
     }
-    if (manual) gStatus = L"Standby clean requested. Waiting for Windows.";
+    const std::wstring task = L"N-Lite Cleaner " + gUserSid;
+    if (!RunSchtasks({L"/Run", L"/TN", task})) {
+        gStatus = L"Ready";
+        if (manual) {
+            gManualCleanerPending = false;
+            ShowCleanerNotification(L"Clean failed: Windows could not start it", CleanerNoticeKind::Failure);
+        }
+        return false;
+    }
+    if (manual) gStatus = L"Ready";
     return true;
 }
 static void PollCleanerSetup() {
     if (!gCleanerSetupProcess || WaitForSingleObject(gCleanerSetupProcess, 0) != WAIT_OBJECT_0) return;
-    DWORD result = 1;
-    GetExitCodeProcess(gCleanerSetupProcess, &result);
     CloseHandle(gCleanerSetupProcess);
     gCleanerSetupProcess = nullptr;
     const bool forAuto = gCleanerSetupForAuto, forManual = gCleanerSetupForManual;
@@ -890,22 +907,16 @@ static void PollCleanerSetup() {
             if (forManual) fallbackStarted = RequestCleanerTaskRun(true);
             else if (gAutoPurge) fallbackStarted = RequestCleanerTaskRun(false);
         }
-        if (gCleanerInstalled) {
-            gStatus = fallbackStarted ?
-                L"Helper update did not finish. The existing cleaner is available." :
-                L"Helper update did not finish. The existing cleaner is still available.";
-        } else {
-            gStatus = result == 0 ? L"Cleaner setup finished, but Windows could not verify the protected task." :
-                L"Cleaner setup failed. N-Lite remained unelevated.";
-        }
+        gStatus = L"Ready";
+        if (forManual && !fallbackStarted)
+            ShowCleanerNotification(L"Clean failed: Windows could not start the cleaner", CleanerNoticeKind::Failure);
         return;
     }
     gCleanerSetupBlocked = false;
     RegWriteDword(L"CleanerSetupBlockedVersion", 0);
     SaveSettings();
     if (forManual) RequestCleanerTaskRun(true);
-    else if (forAuto) gStatus = L"Automatic standby cleaning is set up. It checks once a minute.";
-    else gStatus = L"Standby cleaner is ready. Routine cleaning will not ask for administrator approval.";
+    else gStatus = L"Ready";
 }
 static void PollCleanerStatus() {
     if (!gCleanerInstalled) return;
@@ -919,14 +930,25 @@ static void PollCleanerStatus() {
             UpdateMetrics();
             gPurgeLatched = true;
             gLastPurge = GetTickCount64();
-            gStatus = L"Standby clean finished. Standby memory is now " + Bytes(gMetrics.standby) + L".";
-        } else if (static_cast<DWORD>(latest.lastManualStatus) == 0xC0000061u) {
-            gStatus = L"Windows denied the cleaner privilege. No memory was changed.";
+            const uint64_t after = static_cast<uint64_t>(gMetrics.standby);
+            const int32_t status = static_cast<int32_t>(latest.lastManualStatus);
+            if (StandbyCleanSucceeded(status, gManualStandbyBefore, after, gPageSize)) {
+                const uint64_t released = gManualStandbyBefore - after;
+                ShowCleanerNotification(L"Clean succeeded: " + Bytes(static_cast<double>(released)) + L" freed",
+                    CleanerNoticeKind::Success);
+            } else if (status >= 0) {
+                ShowCleanerNotification(L"Clean failed: standby size unchanged", CleanerNoticeKind::Failure);
+            } else {
+                ShowCleanerNotification(L"Clean failed: Windows rejected the request", CleanerNoticeKind::Failure);
+            }
+            gManualStandbyBefore = 0;
+            gPurgeLatched = true;
+            gLastPurge = GetTickCount64();
+            gStatus = L"Ready";
         } else {
-            std::wostringstream message;
-            message << L"Standby clean failed (Windows status 0x" << std::hex << std::uppercase
-                << static_cast<DWORD>(latest.lastManualStatus) << L").";
-            gStatus = message.str();
+            gManualStandbyBefore = 0;
+            ShowCleanerNotification(L"Clean failed: Windows rejected the request", CleanerNoticeKind::Failure);
+            gStatus = L"Ready";
         }
     }
     if (latest.lastAutoTick && latest.lastAutoTick != gLastSeenPurgeTick) {
@@ -937,11 +959,16 @@ static void PollCleanerStatus() {
     gCleanerStatus = latest;
 }
 static void DoPurge() {
-    UpdateMetrics();
-    if (gMetrics.standby < static_cast<double>(gPageSize)) {
-        gStatus = L"The standby list is already empty.";
+    if (gManualCleanerPending) {
+        ShowCleanerNotification(L"Clean is already running", CleanerNoticeKind::Info);
         return;
     }
+    UpdateMetrics();
+    if (gMetrics.standby < static_cast<double>(gPageSize)) {
+        ShowCleanerNotification(L"Standby list is already empty", CleanerNoticeKind::Info);
+        return;
+    }
+    gManualStandbyBefore = static_cast<uint64_t>(gMetrics.standby);
     if (!gCleanerInstalled) {
         StartCleanerSetup(false, true);
         return;
@@ -1346,6 +1373,15 @@ static void DrawMemory(HDC dc, int cw, int ch) {
 
     Txt(dc,L"Auto clean",clean.left+cleanPad,clean.top+194,innerW-63,20,C_TEXT,gFontMed);
     DrawSwitch(dc,R(clean.right-cleanPad-46,clean.top+191,46,26),gAutoPurge,ID_AUTO);
+
+    const ULONGLONG now = GetTickCount64();
+    if (!gCleanerNotification.empty() && now < gCleanerNotificationUntil) {
+        const COLORREF noticeColor = gCleanerNotificationKind == CleanerNoticeKind::Success ? C_GREEN :
+            (gCleanerNotificationKind == CleanerNoticeKind::Failure ? C_RED : C_MUTED);
+        RECT notice = R(clean.left+cleanPad,clean.top+222,innerW,22);
+        Round(dc,notice,C_PANEL2,C_LINE,8);
+        Txt(dc,gCleanerNotification,notice.left+9,notice.top,W(notice)-18,H(notice),noticeColor,gFontSmall);
+    }
 
     DrawButton(dc,R(clean.left+cleanPad,clean.top+251,innerW,38),L"Clean now",ID_PURGE,C_ACCENT,RGB(255,255,255),true);
 
