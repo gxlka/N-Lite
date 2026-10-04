@@ -6,6 +6,7 @@
 #include "startup_policy.h"
 #include "process_visibility.h"
 
+#include <cstddef>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -144,6 +145,11 @@ int main() {
     Check(sizeof(memoryLists) == 88, "system_memory_list_information_uses_fixed_32_bit_fields");
     Check(StandbyBytesFromPageCounts(memoryLists, 4096) == 5u * 4096u,
         "standby_bytes_sum_all_eight_priority_buckets");
+    memoryLists.freePageCount = 7;
+    Check(offsetof(SystemMemoryListInfo, freePageCount) == 4 &&
+        offsetof(SystemMemoryListInfo, standby) == 20 &&
+        FreeBytesFromPageCount(memoryLists, 4096) == 7u * 4096u,
+        "memory_panel_reads_the_32_bit_free_and_standby_counters");
 
     CleanerSettings settings{true, 64, 7200, 7};
     const std::wstring settingsText = SerializeCleanerSettings(settings);
