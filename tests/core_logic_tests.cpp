@@ -4,6 +4,7 @@
 #include "ui_theme.h"
 #include "timer_slider.h"
 #include "startup_policy.h"
+#include "process_visibility.h"
 
 #include <iostream>
 #include <string>
@@ -63,6 +64,33 @@ int main() {
     Check(DecideCleanerSetup(false, true) == CleanerSetupAction::Install,
         "missing_cleaner_setup_marker_requests_install");
 
+    const std::vector<uint8_t> approvalEnabled{2, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
+    const std::vector<uint8_t> approvalDisabled{3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
+    Check(ParseStartupApprovalState(approvalEnabled) == StartupApprovalState::Enabled &&
+        ParseStartupApprovalState(approvalDisabled) == StartupApprovalState::Disabled,
+        "startup_approval_decodes_windows_enabled_and_disabled_states");
+    const auto disabledApproval = SetStartupApprovalState(approvalEnabled, false);
+    Check(ParseStartupApprovalState(disabledApproval) == StartupApprovalState::Disabled &&
+        disabledApproval.size() == 12 && disabledApproval[4] == 1 && disabledApproval[11] == 8,
+        "startup_approval_toggle_changes_state_and_preserves_timestamp");
+    Check(StartupSourceEnabled(true, StartupApprovalState::Disabled) == false &&
+        StartupSourceEnabled(true, StartupApprovalState::Enabled) &&
+        StartupSourceEnabled(true, StartupApprovalState::Unknown) &&
+        !StartupSourceEnabled(false, StartupApprovalState::Enabled),
+        "startup_approval_overrides_active_source_state");
+    Check(IsStartupTaskTriggerType(8) && IsStartupTaskTriggerType(9) &&
+        !IsStartupTaskTriggerType(2),
+        "only_boot_and_logon_tasks_count_as_startup");
+    Check(!kShowAllProcessesDefault &&
+        ShouldShowProcess(false, true, true) &&
+        !ShouldShowProcess(false, true, false) &&
+        !ShouldShowProcess(false, false, false) &&
+        ShouldShowProcess(true, false, false),
+        "process_list_hides_non_user_processes_until_show_all");
+    Check(!kAutoCleanDefaultEnabled &&
+        CleanerBadgeFor(false, false, false, false) == CleanerBadgeState::Off &&
+        CleanerBadgeFor(true, false, false, false) == CleanerBadgeState::SetupNeeded,
+        "cleaner_badge_respects_auto_clean_off_by_default");
     Check(IsValidCleanerSid(L"S-1-5-21-100-200-300-1001"), "valid_user_sid_is_accepted");
     Check(!IsValidCleanerSid(L"S-1-5-21-100-200-300-1001\\.."), "sid_path_injection_is_rejected");
     Check(!IsValidCleanerSid(L"S-1-5-21-100-200-300-"), "sid_trailing_separator_is_rejected");

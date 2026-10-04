@@ -25,3 +25,36 @@ inline std::wstring StartupValueNameForPath(const std::wstring& path,
     }
     return name;
 }
+
+enum class StartupApprovalState { Enabled, Disabled, Unknown };
+
+inline StartupApprovalState ParseStartupApprovalState(const std::vector<uint8_t>& data) {
+    if (data.size() < sizeof(uint32_t)) return StartupApprovalState::Unknown;
+    const uint32_t state = static_cast<uint32_t>(data[0]) |
+        (static_cast<uint32_t>(data[1]) << 8) |
+        (static_cast<uint32_t>(data[2]) << 16) |
+        (static_cast<uint32_t>(data[3]) << 24);
+    if (state == 2) return StartupApprovalState::Enabled;
+    if (state == 3) return StartupApprovalState::Disabled;
+    return StartupApprovalState::Unknown;
+}
+
+inline std::vector<uint8_t> SetStartupApprovalState(const std::vector<uint8_t>& existing, bool enabled) {
+    std::vector<uint8_t> data = existing;
+    if (data.size() < 12) data.resize(12, 0);
+    const uint32_t state = enabled ? 2u : 3u;
+    data[0] = static_cast<uint8_t>(state & 0xff);
+    data[1] = static_cast<uint8_t>((state >> 8) & 0xff);
+    data[2] = static_cast<uint8_t>((state >> 16) & 0xff);
+    data[3] = static_cast<uint8_t>((state >> 24) & 0xff);
+    return data;
+}
+
+inline bool StartupSourceEnabled(bool sourcePresent, StartupApprovalState state) {
+    if (!sourcePresent) return false;
+    return state != StartupApprovalState::Disabled;
+}
+
+inline bool IsStartupTaskTriggerType(int type) {
+    return type == 8 || type == 9;
+}

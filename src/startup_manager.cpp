@@ -3,6 +3,9 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shlobj.h>
+#include <taskschd.h>
+#include <oleauto.h>
+#include <sddl.h>
 
 #include <algorithm>
 #include <cwctype>
@@ -55,6 +58,37 @@ bool ReadValue(HKEY root,const std::wstring& subkey,DWORD view,const std::wstrin
     if(result==ERROR_SUCCESS){data.resize(size);result=RegQueryValueExW(key,name.c_str(),nullptr,&type,data.empty()?nullptr:data.data(),&size);data.resize(size);}
     RegCloseKey(key);return result==ERROR_SUCCESS;
 }
+
+std::wstring ApprovalSubkey(StartupKind kind, DWORD view) {
+    const wchar_t* category = kind==StartupKind::UserFolder||kind==StartupKind::CommonFolder ?
+        L"StartupFolder" : (view==KEY_WOW64_32KEY ? L"Run32" : L"Run");
+    return std::wstring(L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\")+category;
+}
+StartupApprovalState ReadApproval(HKEY root,const std::wstring& subkey,DWORD view,const std::wstring& name) {
+    DWORD type=0;std::vector<BYTE> bytes;
+    if(!ReadValue(root,subkey,view,name,type,bytes)||type!=REG_BINARY)return StartupApprovalState::Unknown;
+    std::vector<uint8_t> data(bytes.begin(),bytes.end());
+    return ParseStartupApprovalState(data);
+}
+bool WriteApproval(const StartupItem& item,bool enabled) {
+    if(item.approvalSubkey.empty()||item.approvalName.empty())return false;
+    HKEY key=nullptr;
+    if(RegCreateKeyExW(HKEY_CURRENT_USER,item.approvalSubkey.c_str(),0,nullptr,0,
+        KEY_QUERY_VALUE|KEY_SET_VALUE|item.registryView,nullptr,&key,nullptr)!=ERROR_SUCCESS)return false;
+    DWORD type=0,size=0;LONG result=RegQueryValueExW(key,item.approvalName.c_str(),nullptr,&type,nullptr,&size);
+    std::vector<uint8_t> prior;
+    if(result==ERROR_SUCCESS&&type==REG_BINARY&&size){
+        prior.resize(size);result=RegQueryValueExW(key,item.approvalName.c_str(),nullptr,&type,
+            reinterpret_cast<BYTE*>(prior.data()),&size);
+        if(result==ERROR_SUCCESS)prior.resize(size);else prior.clear();
+    }
+    if(result!=ERROR_SUCCESS&&result!=ERROR_FILE_NOT_FOUND){RegCloseKey(key);return false;}
+    const std::vector<uint8_t> bytes=SetStartupApprovalState(prior,enabled);
+    result=RegSetValueExW(key,item.approvalName.c_str(),0,REG_BINARY,
+        reinterpret_cast<const BYTE*>(bytes.data()),static_cast<DWORD>(bytes.size()));
+    RegCloseKey(key);return result==ERROR_SUCCESS;
+}
+
 void AddRunItems(std::vector<StartupItem>& items,HKEY root,StartupKind kind,DWORD view) {
     HKEY key=nullptr;const std::wstring subkey=RunSubkey(kind);
     if(RegOpenKeyExW(root,subkey.c_str(),0,KEY_QUERY_VALUE|view,&key)!=ERROR_SUCCESS)return;
@@ -70,6 +104,12 @@ void AddRunItems(std::vector<StartupItem>& items,HKEY root,StartupKind kind,DWOR
         item.command=RawString(item.rawData);item.source=SourceName(kind,view);item.kind=kind;
         item.registryView=view;item.valueType=type;
         item.canToggle=IsUserRegistryStartup(kind)&&item.name.find_first_of(L"\\/")==std::wstring::npos;
+        if(kind==StartupKind::UserRun||kind==StartupKind::MachineRun){
+            item.approvalSubkey=ApprovalSubkey(kind,view);item.approvalName=item.name;
+            item.approvalManaged=kind==StartupKind::UserRun&&item.canToggle;
+            const StartupApprovalState state=ReadApproval(root,item.approvalSubkey,view,item.name);
+            item.enabled=StartupSourceEnabled(true,state);
+        }
         items.push_back(std::move(item));
     }
     RegCloseKey(key);
@@ -113,10 +153,208 @@ void AddFolderItems(std::vector<StartupItem>& items,StartupKind kind,int folderI
         StartupItem item;item.name=displayName;item.kind=kind;item.path=folder+L"\\"+filename;
         item.command=disabled?item.path.substr(0,item.path.size()-suffix.size()):item.path;
         item.source=SourceName(kind,0)+(disabled?L" / disabled":L"");item.enabled=!disabled;
-        item.canToggle=kind==StartupKind::UserFolder;items.push_back(std::move(item));
+        item.canToggle=kind==StartupKind::UserFolder;
+        if(!disabled&&(kind==StartupKind::UserFolder||kind==StartupKind::CommonFolder)){
+            item.approvalSubkey=ApprovalSubkey(kind,KEY_WOW64_64KEY);item.approvalName=filename;
+            const bool currentUser=kind==StartupKind::UserFolder;
+            item.approvalManaged=currentUser;
+            item.enabled=StartupSourceEnabled(true,ReadApproval(currentUser?HKEY_CURRENT_USER:HKEY_LOCAL_MACHINE,
+                item.approvalSubkey,KEY_WOW64_64KEY,item.approvalName));
+        }
+        items.push_back(std::move(item));
     }while(FindNextFileW(search,&found));
     FindClose(search);
 }
+
+template <typename T> void ReleaseCom(T*& value) {
+    if(value){value->Release();value=nullptr;}
+}
+std::wstring BstrText(BSTR value) {
+    return value?std::wstring(value,SysStringLen(value)):std::wstring();
+}
+bool IsMicrosoftTaskPath(const std::wstring& path) {
+    constexpr size_t prefixLength=10;
+    if(path.size()<prefixLength||_wcsnicmp(path.c_str(),L"\\Microsoft",prefixLength)!=0)return false;
+    return path.size()==prefixLength||path[prefixLength]==L'\\';
+}
+bool IsCurrentTaskPrincipal(const std::wstring& principal) {
+    if(principal.empty())return false;
+    HANDLE token=nullptr;if(!OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&token))return false;
+    DWORD bytes=0;GetTokenInformation(token,TokenUser,nullptr,0,&bytes);
+    std::vector<BYTE> buffer(bytes);bool same=false;
+    if(bytes&&GetTokenInformation(token,TokenUser,buffer.data(),bytes,&bytes)){
+        PSID current=reinterpret_cast<TOKEN_USER*>(buffer.data())->User.Sid;
+        PSID requested=nullptr;DWORD sidBytes=0,domainChars=0;SID_NAME_USE use{};
+        if(ConvertStringSidToSidW(principal.c_str(),&requested)){
+            same=EqualSid(current,requested)!=FALSE;LocalFree(requested);
+        }else{
+            LookupAccountNameW(nullptr,principal.c_str(),nullptr,&sidBytes,nullptr,&domainChars,&use);
+            if(sidBytes){
+                std::vector<BYTE> sid(sidBytes);std::vector<wchar_t> domain(domainChars?domainChars:1);
+                if(LookupAccountNameW(nullptr,principal.c_str(),sid.data(),&sidBytes,
+                    domain.data(),&domainChars,&use))same=EqualSid(current,sid.data())!=FALSE;
+            }
+        }
+    }
+    CloseHandle(token);return same;
+}
+std::wstring TaskCommand(ITaskDefinition* definition) {
+    IActionCollection* actions=nullptr;if(FAILED(definition->get_Actions(&actions)))return L"";
+    LONG count=0;actions->get_Count(&count);std::wstring command;
+    for(LONG i=1;i<=count&&command.empty();++i){
+        IAction* action=nullptr;
+        if(SUCCEEDED(actions->get_Item(i,&action))&&action){
+            IExecAction* exec=nullptr;
+            if(SUCCEEDED(action->QueryInterface(IID_IExecAction,reinterpret_cast<void**>(&exec)))&&exec){
+                BSTR path=nullptr,args=nullptr;
+                if(SUCCEEDED(exec->get_Path(&path)))command=BstrText(path);
+                if(SUCCEEDED(exec->get_Arguments(&args))&&!BstrText(args).empty()){
+                    if(!command.empty())command+=L" ";
+                    command+=BstrText(args);
+                }
+                SysFreeString(path);SysFreeString(args);ReleaseCom(exec);
+            }
+            ReleaseCom(action);
+        }
+    }
+    ReleaseCom(actions);return command;
+}
+void AddTasksInFolder(ITaskFolder* folder,std::vector<StartupItem>& items,unsigned depth) {
+    if(!folder||depth>12)return;
+    BSTR currentFolder=nullptr;folder->get_Path(&currentFolder);
+    const std::wstring currentPath=BstrText(currentFolder);SysFreeString(currentFolder);
+    if(IsMicrosoftTaskPath(currentPath))return;
+    IRegisteredTaskCollection* tasks=nullptr;
+    if(SUCCEEDED(folder->GetTasks(TASK_ENUM_HIDDEN,&tasks))&&tasks){
+        LONG count=0;tasks->get_Count(&count);
+        for(LONG i=1;i<=count;++i){
+            VARIANT index;VariantInit(&index);index.vt=VT_I4;index.lVal=i;
+            IRegisteredTask* task=nullptr;
+            if(SUCCEEDED(tasks->get_Item(index,&task))&&task){
+                ITaskDefinition* definition=nullptr;
+                if(SUCCEEDED(task->get_Definition(&definition))&&definition){
+                    ITriggerCollection* triggers=nullptr;
+                    if(SUCCEEDED(definition->get_Triggers(&triggers))&&triggers){
+                        LONG triggerCount=0;triggers->get_Count(&triggerCount);
+                        bool startup=false,onlyStartup=triggerCount>0,hasBoot=false,hasLogon=false,hasEnabledStartupTrigger=false;
+                        for(LONG t=1;t<=triggerCount;++t){
+                            ITrigger* trigger=nullptr;
+                            if(SUCCEEDED(triggers->get_Item(t,&trigger))&&trigger){
+                                TASK_TRIGGER_TYPE2 type{};trigger->get_Type(&type);
+                                if(IsStartupTaskTriggerType(static_cast<int>(type))){
+                                    startup=true;
+                                    hasBoot=hasBoot||type==TASK_TRIGGER_BOOT;
+                                    hasLogon=hasLogon||type==TASK_TRIGGER_LOGON;
+                                    VARIANT_BOOL triggerEnabled=VARIANT_FALSE;
+                                    if(SUCCEEDED(trigger->get_Enabled(&triggerEnabled))&&triggerEnabled==VARIANT_TRUE)
+                                        hasEnabledStartupTrigger=true;
+                                }else onlyStartup=false;
+                                ReleaseCom(trigger);
+                            }else onlyStartup=false;
+                        }
+                        if(startup){
+                            BSTR taskName=nullptr,taskPath=nullptr;task->get_Name(&taskName);task->get_Path(&taskPath);
+                            StartupItem item;item.kind=StartupKind::ScheduledTask;
+                            item.name=BstrText(taskName);item.taskPath=BstrText(taskPath);
+                            item.source=hasBoot&&hasLogon?L"Task Scheduler / boot and logon":
+                                (hasBoot?L"Task Scheduler / boot":L"Task Scheduler / logon");
+                            item.command=TaskCommand(definition);
+                            VARIANT_BOOL enabled=VARIANT_FALSE;task->get_Enabled(&enabled);
+                            item.enabled=enabled==VARIANT_TRUE&&hasEnabledStartupTrigger;
+                            BSTR user=nullptr;IPrincipal* principal=nullptr;
+                            if(SUCCEEDED(definition->get_Principal(&principal))&&principal){
+                                principal->get_UserId(&user);ReleaseCom(principal);
+                            }
+                            item.canToggle=onlyStartup&&hasEnabledStartupTrigger&&!IsMicrosoftTaskPath(item.taskPath)&&
+                                IsCurrentTaskPrincipal(BstrText(user));
+                            SysFreeString(taskName);SysFreeString(taskPath);SysFreeString(user);
+                            if(!item.taskPath.empty())items.push_back(std::move(item));
+                        }
+                        ReleaseCom(triggers);
+                    }
+                    ReleaseCom(definition);
+                }
+                ReleaseCom(task);
+            }
+            VariantClear(&index);
+        }
+        ReleaseCom(tasks);
+    }
+    ITaskFolderCollection* folders=nullptr;
+    if(SUCCEEDED(folder->GetFolders(0,&folders))&&folders){
+        LONG count=0;folders->get_Count(&count);
+        for(LONG i=1;i<=count;++i){
+            VARIANT index;VariantInit(&index);index.vt=VT_I4;index.lVal=i;
+            ITaskFolder* child=nullptr;
+            if(SUCCEEDED(folders->get_Item(index,&child))&&child){
+                AddTasksInFolder(child,items,depth+1);ReleaseCom(child);
+            }
+            VariantClear(&index);
+        }
+        ReleaseCom(folders);
+    }
+}
+void AddScheduledStartupItems(std::vector<StartupItem>& items) {
+    const HRESULT init=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+    const bool uninitialize=SUCCEEDED(init);
+    if(FAILED(init)&&init!=RPC_E_CHANGED_MODE)return;
+    ITaskService* service=nullptr;
+    if(SUCCEEDED(CoCreateInstance(CLSID_TaskScheduler,nullptr,CLSCTX_INPROC_SERVER,
+        IID_ITaskService,reinterpret_cast<void**>(&service)))&&service){
+        VARIANT empty;VariantInit(&empty);
+        if(SUCCEEDED(service->Connect(empty,empty,empty,empty))){
+            BSTR rootPath=SysAllocString(L"\\");ITaskFolder* root=nullptr;
+            if(rootPath&&SUCCEEDED(service->GetFolder(rootPath,&root))&&root){
+                AddTasksInFolder(root,items,0);ReleaseCom(root);
+            }
+            SysFreeString(rootPath);
+        }
+        ReleaseCom(service);
+    }
+    if(uninitialize)CoUninitialize();
+}
+bool SetScheduledTaskEnabled(const std::wstring& taskPath,bool enabled) {
+    const HRESULT init=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+    const bool uninitialize=SUCCEEDED(init);
+    if(FAILED(init)&&init!=RPC_E_CHANGED_MODE)return false;
+    bool ok=false;ITaskService* service=nullptr;
+    if(SUCCEEDED(CoCreateInstance(CLSID_TaskScheduler,nullptr,CLSCTX_INPROC_SERVER,
+        IID_ITaskService,reinterpret_cast<void**>(&service)))&&service){
+        VARIANT empty;VariantInit(&empty);
+        if(SUCCEEDED(service->Connect(empty,empty,empty,empty))){
+            const size_t split=taskPath.find_last_of(L'\\');
+            if(split!=std::wstring::npos&&split+1<taskPath.size()){
+                const std::wstring folderName=split==0?L"\\":taskPath.substr(0,split);
+                const std::wstring name=taskPath.substr(split+1);
+                BSTR folderBstr=SysAllocString(folderName.c_str()),nameBstr=SysAllocString(name.c_str());
+                ITaskFolder* folder=nullptr;IRegisteredTask* task=nullptr;
+                if(folderBstr&&nameBstr&&SUCCEEDED(service->GetFolder(folderBstr,&folder))&&folder&&
+                    SUCCEEDED(folder->GetTask(nameBstr,&task))&&task){
+                    ok=SUCCEEDED(task->put_Enabled(enabled?VARIANT_TRUE:VARIANT_FALSE));
+                }
+                ReleaseCom(task);ReleaseCom(folder);SysFreeString(folderBstr);SysFreeString(nameBstr);
+            }
+        }
+        ReleaseCom(service);
+    }
+    if(uninitialize)CoUninitialize();
+    return ok;
+}
+void AddWindowsShellItems(std::vector<StartupItem>& items) {
+    const std::wstring key=L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon";
+    const struct {const wchar_t* value;const wchar_t* label;} shell[]={
+        {L"Shell",L"Windows desktop (Explorer)"},
+        {L"Userinit",L"Windows sign-in"}
+    };
+    for(const auto& entry:shell){
+        DWORD type=0;std::vector<BYTE> bytes;
+        if(!ReadValue(HKEY_LOCAL_MACHINE,key,KEY_WOW64_64KEY,entry.value,type,bytes))continue;
+        StartupItem item;item.kind=StartupKind::WindowsShell;item.name=entry.label;
+        item.command=RawString(bytes);item.source=L"Windows / core startup";
+        item.enabled=true;item.canToggle=false;items.push_back(std::move(item));
+    }
+}
+
 bool DeleteBackup(const StartupItem& item) {
     const std::wstring path=BackupPath(item);HKEY key=nullptr;
     if(RegOpenKeyExW(HKEY_CURRENT_USER,path.c_str(),0,KEY_SET_VALUE,&key)!=ERROR_SUCCESS)return false;
@@ -133,6 +371,8 @@ std::vector<StartupItem> EnumerateStartupItems() {
         AddRunItems(items,HKEY_LOCAL_MACHINE,StartupKind::MachineRun,view);AddRunItems(items,HKEY_LOCAL_MACHINE,StartupKind::MachineRunOnce,view);
     }
     AddFolderItems(items,StartupKind::UserFolder,CSIDL_STARTUP);AddFolderItems(items,StartupKind::CommonFolder,CSIDL_COMMON_STARTUP);
+    AddWindowsShellItems(items);
+    AddScheduledStartupItems(items);
     auto lower=[](std::wstring value){std::transform(value.begin(),value.end(),value.begin(),[](wchar_t c){return static_cast<wchar_t>(std::towlower(c));});return value;};
     std::stable_sort(items.begin(),items.end(),[&](const StartupItem& a,const StartupItem& b){
         const std::wstring as=lower(a.source),bs=lower(b.source);if(as!=bs)return as<bs;
@@ -143,6 +383,16 @@ std::vector<StartupItem> EnumerateStartupItems() {
 
 bool SetStartupItemEnabled(StartupItem& item,bool enabled) {
     if(!item.canToggle)return false;
+    if(item.kind==StartupKind::ScheduledTask){
+        if(item.enabled==enabled)return true;
+        if(!SetScheduledTaskEnabled(item.taskPath,enabled))return false;
+        item.enabled=enabled;return true;
+    }
+    if(item.approvalManaged){
+        if(item.enabled==enabled)return true;
+        if(!WriteApproval(item,enabled))return false;
+        item.enabled=enabled;return true;
+    }
     if(item.kind==StartupKind::UserFolder){
         const std::wstring suffix=L".nlite-disabled";if(item.enabled==enabled)return true;
         const std::wstring destination=enabled?item.path.substr(0,item.path.size()-suffix.size()):item.path+suffix;
@@ -189,5 +439,14 @@ bool AddStartupApplication(HWND owner,std::wstring& addedName) {
     addedName=StartupValueNameForPath(path,names);const std::wstring command=QuoteArgument(path);
     HKEY key=nullptr;if(RegCreateKeyExW(HKEY_CURRENT_USER,RunSubkey(StartupKind::UserRun),0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)!=ERROR_SUCCESS)return false;
     const LONG result=RegSetValueExW(key,addedName.c_str(),0,REG_SZ,reinterpret_cast<const BYTE*>(command.c_str()),static_cast<DWORD>((command.size()+1)*sizeof(wchar_t)));
-    RegCloseKey(key);return result==ERROR_SUCCESS;
+    RegCloseKey(key);if(result!=ERROR_SUCCESS)return false;
+    StartupItem approval;approval.kind=StartupKind::UserRun;approval.enabled=false;approval.canToggle=true;
+    approval.approvalManaged=true;approval.registryView=KEY_WOW64_64KEY;
+    approval.approvalName=addedName;
+    approval.approvalSubkey=ApprovalSubkey(StartupKind::UserRun,KEY_WOW64_64KEY);
+    if(SetStartupItemEnabled(approval,true))return true;
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,RunSubkey(StartupKind::UserRun),0,KEY_SET_VALUE|KEY_WOW64_64KEY,&key)==ERROR_SUCCESS){
+        RegDeleteValueW(key,addedName.c_str());RegCloseKey(key);
+    }
+    return false;
 }

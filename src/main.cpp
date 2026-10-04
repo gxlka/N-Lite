@@ -37,6 +37,7 @@
 #include "ui_theme.h"
 #include "timer_slider.h"
 #include "startup_policy.h"
+#include "process_visibility.h"
 #include "startup_manager.h"
 
 static constexpr WORD IDI_NLITE = 101;
@@ -71,7 +72,7 @@ static const int ID_SORT_NAME = 20, ID_SORT_PID = 21, ID_SORT_CPU = 22, ID_SORT_
 static const int ID_PURGE = 30, ID_AUTO = 31, ID_THRESHOLD_DOWN = 32, ID_THRESHOLD_UP = 33, ID_THRESHOLD_FIELD = 37;
 static const int ID_INTERVAL_FIELD = 34, ID_ELEVATE = 36, ID_INTERVAL_OPTION = 38, ID_THEME = 46;
 static const int ID_TIMER_TOGGLE = 40, ID_TIMER_MINUS = 41, ID_TIMER_PLUS = 42, ID_AUTOSTART = 43, ID_UPDATE_CHECK_NOW = 44, ID_OPEN_GITHUB = 45;
-static const int ID_STARTUP_ADD = 47, ID_STARTUP_TOGGLE = 48;
+static const int ID_STARTUP_ADD = 47, ID_STARTUP_TOGGLE = 48, ID_PROCESS_FILTER = 49;
 
 static const int ID_EXIT = 9001, ID_SHOW = 9002, ID_UPDATE = 9003;
 static COLORREF C_BG = RGB(17, 21, 29), C_PANEL = RGB(26, 32, 42), C_PANEL2 = RGB(21, 26, 35);
@@ -94,6 +95,7 @@ struct ProcRow {
     double cpu = 0.0;
     SIZE_T working = 0, privateBytes = 0, treeWorking = 0, treePrivateBytes = 0;
     bool hasChildren = false;
+    bool ownerKnown = false, ownedByCurrentUser = false;
     bool groupHeader = false;
     std::wstring groupKey;
 };
@@ -126,7 +128,8 @@ static int gSortColumn = 0;
 static bool gSortDescending = false;
 static DWORD gSelectedPid = 0;
 static std::wstring gSearch, gStatus = L"Ready";
-static bool gSearchFocus = false, gTrayAdded = false, gExiting = false, gAutoPurge = false, gAutoStart = false;
+static bool gSearchFocus = false, gTrayAdded = false, gExiting = false, gAutoPurge = kAutoCleanDefaultEnabled, gAutoStart = false;
+static bool gShowAllProcesses = kShowAllProcessesDefault;
 static bool gThresholdFocus=false, gThresholdReplaceOnType=false, gTimerEnabled=false, gTimerActive=false, gAutoTaskReady=false, gHasProcessOverrides=false;
 static bool gDarkTheme=true, gCleanerInstalled=false, gCleanerCurrentVersion=false;
 static bool gCleanerSetupForAuto=false, gCleanerSetupForManual=false;
@@ -278,6 +281,21 @@ static std::wstring ImagePath(HANDLE h) {
     if (QueryFullProcessImageNameW(h, 0, b, &n)) return std::wstring(b, n);
     return L"Path unavailable";
 }
+static bool ProcessOwnedByCurrentUser(HANDLE process, bool& ownerKnown) {
+    ownerKnown=false;
+    if(gUserSid.empty())return false;
+    HANDLE token=nullptr;if(!OpenProcessToken(process,TOKEN_QUERY,&token))return false;
+    DWORD bytes=0;GetTokenInformation(token,TokenUser,nullptr,0,&bytes);
+    std::vector<BYTE> buffer(bytes);bool owned=false;
+    if(bytes&&GetTokenInformation(token,TokenUser,buffer.data(),bytes,&bytes)){
+        LPWSTR sidText=nullptr;
+        const auto user=reinterpret_cast<TOKEN_USER*>(buffer.data());
+        if(ConvertSidToStringSidW(user->User.Sid,&sidText)){
+            ownerKnown=true;owned=_wcsicmp(sidText,gUserSid.c_str())==0;LocalFree(sidText);
+        }
+    }
+    CloseHandle(token);return owned;
+}
 static void RefreshProcesses() {
     DWORD nowMs = GetTickCount();
     DWORD elapsed = gLastRefresh ? nowMs - gLastRefresh : 0;
@@ -301,6 +319,7 @@ static void RefreshProcesses() {
             HANDLE ph = OpenProcess(rights, FALSE, p.pid);
             if (ph) {
                 p.path = ImagePath(ph);
+                p.ownedByCurrentUser = ProcessOwnedByCurrentUser(ph,p.ownerKnown);
                 PROCESS_MEMORY_COUNTERS_EX pm{}; pm.cb = sizeof(pm);
                 if (GetProcessMemoryInfo(ph, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pm), sizeof(pm))) {
                     p.working = pm.WorkingSetSize; p.privateBytes = pm.PrivateUsage;
@@ -330,6 +349,9 @@ static void RefreshProcesses() {
 
     std::unordered_set<DWORD> ids; for (auto& p : gProcs) ids.insert(p.pid);
     for(auto it=gCpuPrevious.begin();it!=gCpuPrevious.end();)if(!ids.count(it->first))it=gCpuPrevious.erase(it);else ++it;
+    std::vector<ProcRow> displayProcs;
+    displayProcs.reserve(gProcs.size());
+    for(const auto& p:gProcs)if(ShouldShowProcess(gShowAllProcesses||gUserSid.empty(),p.ownerKnown,p.ownedByCurrentUser))displayProcs.push_back(p);
     auto compareRows = [&](const ProcRow& a,const ProcRow& b) {
         int cmp=0;
         if(gSortColumn==0)cmp=_wcsicmp(a.name.c_str(),b.name.c_str());
@@ -341,12 +363,12 @@ static void RefreshProcesses() {
         return gSortDescending?cmp>0:cmp<0;
     };
     std::vector<ProcessSample> samples;
-    samples.reserve(gProcs.size());
-    for (const auto& p : gProcs) samples.push_back({p.pid, p.path,
+    samples.reserve(displayProcs.size());
+    for (const auto& p : displayProcs) samples.push_back({p.pid, p.path,
         static_cast<uint64_t>(p.working), static_cast<uint64_t>(p.privateBytes), p.cpu});
     std::vector<ProcessGroup> groups = GroupProcessSamples(samples);
     std::sort(groups.begin(), groups.end(), [&](const ProcessGroup& a, const ProcessGroup& b) {
-        ProcRow left = gProcs[a.representativeIndex], right = gProcs[b.representativeIndex];
+        ProcRow left = displayProcs[a.representativeIndex], right = displayProcs[b.representativeIndex];
         left.name = a.path.empty() || a.path == L"Path unavailable" ? left.name : PathFindFileNameW(a.path.c_str());
         right.name = b.path.empty() || b.path == L"Path unavailable" ? right.name : PathFindFileNameW(b.path.c_str());
         left.groupHeader = a.members.size() > 1; right.groupHeader = b.members.size() > 1;
@@ -361,7 +383,7 @@ static void RefreshProcesses() {
     for (const auto& group : groups) {
         liveGroups.insert(group.key);
         const bool grouped = group.members.size() > 1;
-        ProcRow summary = gProcs[group.representativeIndex];
+        ProcRow summary = displayProcs[group.representativeIndex];
         if (!group.path.empty() && group.path != L"Path unavailable") summary.name = PathFindFileNameW(group.path.c_str());
         summary.groupKey = group.key;
         summary.groupHeader = grouped;
@@ -373,9 +395,9 @@ static void RefreshProcesses() {
         flat.push_back(summary);
         if (!grouped || !gExpanded[group.key]) continue;
         std::vector<size_t> members = group.members;
-        std::sort(members.begin(), members.end(), [&](size_t a, size_t b) { return compareRows(gProcs[a], gProcs[b]); });
+        std::sort(members.begin(), members.end(), [&](size_t a, size_t b) { return compareRows(displayProcs[a], displayProcs[b]); });
         for (size_t member : members) {
-            ProcRow child = gProcs[member];
+            ProcRow child = displayProcs[member];
             child.groupKey = group.key;
             child.groupHeader = false;
             child.hasChildren = false;
@@ -399,7 +421,7 @@ static void RefreshProcesses() {
     });
     gScroll = anchor != gVisible.end() ? static_cast<int>(anchor - gVisible.begin()) : previousScroll;
     gScroll = (std::max)(0, (std::min)(gScroll, static_cast<int>(gVisible.size())));
-    if (!gSelectedPid || std::none_of(gProcs.begin(), gProcs.end(), [](const ProcRow& p){ return p.pid == gSelectedPid; })) {
+    if (!gSelectedPid || std::none_of(gVisible.begin(), gVisible.end(), [](const ProcRow& p){ return p.pid == gSelectedPid; })) {
         gSelectedPid = gVisible.empty() ? 0 : gVisible.front().pid;
     }
 }
@@ -554,6 +576,7 @@ static void SaveSettings() {
     RegWriteDword(L"AutoPurge",gAutoPurge?1:0); RegWriteDword(L"ThresholdMB",gThresholdMB); RegWriteDword(L"IntervalSec",gIntervalSec);
     RegWriteDword(L"TimerEnabled",gTimerEnabled?1:0); RegWriteDword(L"TimerResolution100ns",gTimerResolution);
     RegWriteDword(L"ThemeDark",gDarkTheme?1:0);
+    RegWriteDword(L"ShowAllProcesses",gShowAllProcesses?1:0);
     if (!gUserSid.empty()) RegWriteString(L"CleanerSid", gUserSid);
     WriteCleanerSettings();
 }
@@ -565,6 +588,7 @@ static void LoadSettings() {
     v=5000; RegReadDword(L"TimerResolution100ns",v); gTimerResolution=v;
     v=0; RegReadDword(L"AutoTaskReady",v); gAutoTaskReady=v!=0;
     v=1; RegReadDword(L"ThemeDark",v); gDarkTheme=v!=0; ApplyThemeColors();
+    v=0; RegReadDword(L"ShowAllProcesses",v); gShowAllProcesses=v!=0;
     RefreshCleanerSetupState();
     if (gCleanerInstalled) {
         std::wstring text; CleanerSettings settings;
@@ -601,12 +625,35 @@ static bool SetAutoStart(bool on) {
         std::wstring cmd = L"\"" + gExePath + L"\" --startup";
         ok = RegSetValueExW(k, L"N-Lite", 0, REG_SZ, reinterpret_cast<const BYTE*>(cmd.c_str()), static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
     } else { LONG dr = RegDeleteValueW(k, L"N-Lite"); ok = dr == ERROR_SUCCESS || dr == ERROR_FILE_NOT_FOUND; }
-    RegCloseKey(k); return ok;
+    RegCloseKey(k);
+    if(ok&&on){
+        StartupItem approval;approval.kind=StartupKind::UserRun;approval.enabled=false;approval.canToggle=true;
+        approval.approvalManaged=true;approval.registryView=KEY_WOW64_64KEY;
+        approval.approvalName=L"N-Lite";
+        approval.approvalSubkey=L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+        ok=SetStartupItemEnabled(approval,true);
+    }
+    return ok;
 }
 static bool ReadAutoStart() {
     HKEY k; if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_QUERY_VALUE|KEY_WOW64_64KEY, &k) != ERROR_SUCCESS) return false;
-    DWORD type = 0, cb = 0; LONG r = RegQueryValueExW(k, L"N-Lite", nullptr, &type, nullptr, &cb); RegCloseKey(k);
-    return r == ERROR_SUCCESS && type == REG_SZ;
+    DWORD type = 0, cb = 0; LONG r = RegQueryValueExW(k, L"N-Lite", nullptr, &type, nullptr, &cb);
+    const bool sourcePresent=r==ERROR_SUCCESS&&type==REG_SZ;RegCloseKey(k);
+    StartupApprovalState state=StartupApprovalState::Unknown;
+    if(sourcePresent&&RegOpenKeyExW(HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run",
+        0,KEY_QUERY_VALUE|KEY_WOW64_64KEY,&k)==ERROR_SUCCESS){
+        DWORD approvalType=0,size=0;
+        if(RegQueryValueExW(k,L"N-Lite",nullptr,&approvalType,nullptr,&size)==ERROR_SUCCESS&&approvalType==REG_BINARY){
+            std::vector<BYTE> bytes(size);
+            if(size&&RegQueryValueExW(k,L"N-Lite",nullptr,&approvalType,bytes.data(),&size)==ERROR_SUCCESS){
+                bytes.resize(size);std::vector<uint8_t> data(bytes.begin(),bytes.end());
+                state=ParseStartupApprovalState(data);
+            }
+        }
+        RegCloseKey(k);
+    }
+    return StartupSourceEnabled(sourcePresent,state);
 }
 static std::wstring ProcessSettingName(const wchar_t* kind,const std::wstring& path) {
     return std::wstring(kind)+L":"+path;
@@ -1101,11 +1148,12 @@ static HICON GetProcessIcon(const ProcRow& p) {
 }
 static void DrawProcesses(HDC dc, int cw, int ch) {
     RECT content=MainContent(cw);int tableX=content.left,tableW=W(content),tableY=193;
-    DrawPageTitle(dc,content,L"Processes",L"View running apps and processes, then adjust how they use your system.");
-    RECT search=R(content.left,142,W(content)-126,38);
+    DrawPageTitle(dc,content,L"Processes",L"Show current-user processes or the full process list.");
+    RECT search=R(content.left,142,W(content)-228,38);
     Round(dc,search,C_FIELD,gSearchFocus?C_ACCENT:C_LINE,9);
     Txt(dc,gSearch.empty()?L"Search processes by name or path":L"Search  ·  "+gSearch,search.left+14,search.top, W(search)-28,H(search),gSearch.empty()?C_MUTED:C_TEXT,gFont);
     AddHit(search,ID_SEARCH);
+    DrawButton(dc,R(content.right-212,142,96,38),gShowAllProcesses?L"My apps":L"Show all",ID_PROCESS_FILTER);
     DrawButton(dc,R(content.right-108,142,108,38),L"Refresh",ID_REFRESH);
     RECT table=R(tableX,tableY,tableW,ch-tableY-25);Card(dc,table);
     int nameX=tableX+56;
@@ -1236,14 +1284,27 @@ static void DrawMemory(HDC dc, int cw, int ch) {
 
     const int cleanPad=16;
     const bool setupBusy=gCleanerSetupProcess&&WaitForSingleObject(gCleanerSetupProcess,0)==WAIT_TIMEOUT;
-    const wchar_t* state=setupBusy?L"Setting up":(gCleanerCurrentVersion?L"Ready":(gCleanerInstalled?L"Update helper":L"Setup needed"));
-    const COLORREF stateColor=gCleanerCurrentVersion?C_GREEN:C_AMBER;
+    const CleanerBadgeState badge=CleanerBadgeFor(gAutoPurge,setupBusy,gCleanerCurrentVersion,gCleanerInstalled);
+    const wchar_t* state=badge==CleanerBadgeState::Off?L"Off":
+        badge==CleanerBadgeState::On?L"On":
+        badge==CleanerBadgeState::SettingUp?L"Setting up":
+        badge==CleanerBadgeState::UpdateNeeded?L"Update":L"Setup";
+    const COLORREF stateColor=badge==CleanerBadgeState::Off?C_MUTED:
+        badge==CleanerBadgeState::On?C_GREEN:C_AMBER;
+    const COLORREF stateSurface=badge==CleanerBadgeState::Off?C_PANEL2:
+        badge==CleanerBadgeState::On?C_GREEN_SOFT:C_AMBER_SOFT;
     RECT chip=R(clean.right-cleanPad-104,clean.top+17,104,23);
-    Round(dc,chip,gCleanerCurrentVersion?C_GREEN_SOFT:C_AMBER_SOFT,gCleanerCurrentVersion?C_GREEN_SOFT:C_AMBER_SOFT,12);
+    Round(dc,chip,stateSurface,stateSurface,12);
     Round(dc,R(chip.left+9,chip.top+8,7,7),stateColor,stateColor,4);
     Txt(dc,state,chip.left+22,chip.top,W(chip)-27,H(chip),stateColor,gFontSmall);
     Txt(dc,L"Standby cleaner",clean.left+cleanPad,clean.top+16,W(clean)-132,24,C_TEXT,gFontMed);
-    Txt(dc,L"One-time setup; routine cleans stay unelevated.",clean.left+cleanPad,clean.top+43,W(clean)-2*cleanPad,19,C_MUTED,gFontSmall);
+    const wchar_t* cleanerCaption=badge==CleanerBadgeState::Off?
+        (gCleanerCurrentVersion?L"Auto clean is off; manual clean is ready.":L"Auto clean is off; manual setup starts when you clean."):
+        badge==CleanerBadgeState::On?L"Auto clean is on; routine cleans stay unelevated.":
+        badge==CleanerBadgeState::SettingUp?L"Setting up cleaner.":
+        badge==CleanerBadgeState::UpdateNeeded?L"Cleaner update needed for automatic cleaning.":
+        L"One-time setup is needed for automatic cleaning.";
+    Txt(dc,cleanerCaption,clean.left+cleanPad,clean.top+43,W(clean)-2*cleanPad,19,C_MUTED,gFontSmall);
 
     const int innerW=W(clean)-2*cleanPad;
     Txt(dc,L"Threshold · MB",clean.left+cleanPad,clean.top+74,innerW,17,C_MUTED,gFontSmall);
@@ -1322,11 +1383,15 @@ static void DrawStartup(HDC dc,int cw,int ch) {
             Txt(dc,item.name,rr.left+10,rr.top+4,W(rr)-controlW-22,19,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
             Txt(dc,item.source+L"  |  "+item.command,rr.left+10,rr.top+24,W(rr)-controlW-22,17,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
             if(item.canToggle)DrawSwitch(dc,R(rr.right-53,rr.top+9,42,25),item.enabled,ID_STARTUP_TOGGLE,static_cast<DWORD>(index));
-            else Txt(dc,L"All users",rr.right-83,rr.top+9,76,23,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+            else {
+                const wchar_t* label=item.kind==StartupKind::WindowsShell?L"Windows":
+                    item.kind==StartupKind::ScheduledTask?L"Read only":L"All users";
+                Txt(dc,label,rr.right-83,rr.top+9,76,23,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+            }
         }
     }
     Line(dc,list.left+13,footerY-4,list.right-13,footerY-4,C_LINE);
-    const std::wstring footerStatus=gStatus==L"Ready"?L"All-users entries are read-only.":gStatus;
+    const std::wstring footerStatus=gStatus==L"Ready"?L"Read-only entries are protected Windows or all-users startup items.":gStatus;
     Txt(dc,std::to_wstring(gStartupEntries.size())+L" items  |  "+footerStatus,list.left+17,footerY,list.right-list.left-34,18,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
 }
 static void DrawSettings(HDC dc,int cw) {
@@ -1475,7 +1540,7 @@ static void RefreshStartupEntries() {
     gStartupEntries=EnumerateStartupItems();gAutoStart=ReadAutoStart();gStartupLastRefresh=GetTickCount();
 }
 static void SaveToggleAuto() {
-    if(gAutoPurge){gAutoPurge=false;SaveSettings();gStatus=L"Automatic standby cleaning disabled.";return;}
+    if(gAutoPurge){gAutoPurge=kAutoCleanDefaultEnabled;SaveSettings();gStatus=L"Automatic standby cleaning disabled.";return;}
     gAutoPurge=true;
     SaveSettings();
     gCleanerSetupBlocked=false;
@@ -1504,6 +1569,7 @@ static void HandleClick(int x,int y,bool dbl) {
     else if(id==ID_UPDATE)InstallLatestUpdate();
     else if(id==ID_UPDATE_CHECK_NOW){CheckForUpdatesAsync();}
     else if(id==ID_OPEN_GITHUB)ShellExecuteW(gWnd,L"open",L"https://github.com/gxlka/N-Lite",nullptr,nullptr,SW_SHOWNORMAL);
+    else if(id==ID_PROCESS_FILTER){gShowAllProcesses=!gShowAllProcesses;gScroll=0;SaveSettings();RefreshProcesses();gStatus=gShowAllProcesses?L"Showing all processes.":L"Showing current-user processes.";}
     else if(id==ID_REFRESH){
         if(gPage==2){RefreshStartupEntries();gStatus=L"Startup list refreshed.";}
         else{RefreshProcesses();UpdateMetrics();gStatus=L"Process list refreshed.";}
@@ -1528,9 +1594,9 @@ static void HandleClick(int x,int y,bool dbl) {
         const size_t index=target->data;
         if(index<gStartupEntries.size()){
             StartupItem& item=gStartupEntries[index];bool ok=false;const bool next=!item.enabled;
-            if(item.kind==StartupKind::UserRun&&item.registryView==KEY_WOW64_64KEY&&_wcsicmp(item.name.c_str(),L"N-Lite")==0){
-                ok=SetAutoStart(next);if(ok)gAutoStart=next;
-            }else ok=SetStartupItemEnabled(item,next);
+            const bool ownStartup=item.kind==StartupKind::UserRun&&item.registryView==KEY_WOW64_64KEY&&_wcsicmp(item.name.c_str(),L"N-Lite")==0;
+            ok=SetStartupItemEnabled(item,next);
+            if(ok&&ownStartup)gAutoStart=next;
             if(ok){gStatus=next?L"Startup app enabled.":L"Startup app disabled.";RefreshStartupEntries();}
             else gStatus=L"Could not change that startup item.";
         }
@@ -1626,7 +1692,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
             PollCleanerStatus();
             if(gManualCleanerPending)RequestCleanerTaskRun(true);
             if(IsWindowVisible(h))UpdateMetrics();
-            if(IsWindowVisible(h)&&gPage==2&&GetTickCount()-gStartupLastRefresh>=5000)RefreshStartupEntries();
+            if(IsWindowVisible(h)&&gPage==2&&GetTickCount()-gStartupLastRefresh>=30000)RefreshStartupEntries();
             if((IsWindowVisible(h)&&gPage==1)||(gHasProcessOverrides&&GetTickCount()-gLastRefresh>=5000))RefreshProcesses();
             if(IsWindowVisible(h))InvalidateRect(h,nullptr,FALSE);
         } return 0;
@@ -1637,6 +1703,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
         for(auto it=gHits.rbegin();it!=gHits.rend();++it)if(Inside(it->r,pt.x,pt.y)){
             if(it->id==ID_MEMORY||it->id==ID_PROCESSES||it->id==ID_STARTUP||it->id==ID_SETTINGS||it->id==ID_THEME){nav=it->id;hand=true;}
             if(gPage==1&&(it->id==100||it->id==101)){hover=it->data;hand=true;}
+            if(gPage==1&&it->id==ID_PROCESS_FILTER)hand=true;
             if(gPage==1&&it->id>=ID_SORT_NAME&&it->id<=ID_SORT_PRIVATE)hand=true;
             if(it->id==ID_INTERVAL_FIELD||it->id==ID_INTERVAL_OPTION)hand=true;
             if(gPage==2&&(it->id==ID_STARTUP_ADD||it->id==ID_STARTUP_TOGGLE||it->id==ID_REFRESH))hand=true;
