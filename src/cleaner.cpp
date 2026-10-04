@@ -1,1 +1,512 @@
-Y™Áäx-ÆÈ‹j◊ù¢Îi∫⁄+äßj[hëÈ‹¢ÈÌÔÕvNãZñã≠¶Îeäw¨‘çëïô•πîÅ]%8Ã…}19}9}58(çëïô•πîÅ9=5%95`(ç•ôπëïòÅ]%8Ã…}]%99P(çëïô•πîÅ]%8Ã…}]%99PÄ¡‡¡¿¿(çïπë•ò(ç•πç±’ëîÄÒ›•πëΩ›Ãπ†¯(ç•πç±’ëîÄÒÕ°ï±±Ö¡§π†¯(ç•πç±’ëîÄÒÕëë∞π†¯(ç•πç±’ëîÄÒÖç±Ö¡§π†¯(ç•πç±’ëîÄÒ—ÖÕ≠Õç°êπ†¯(ç•πç±’ëîÄÒΩ±ïÖ’—ºπ†¯(ç•πç±’ëîÄÒ—±°ï±¿Ã»π†¯(ç•πç±’ëîÄÒÕ—…•πú¯(ç•πç±’ëîÄÒŸïç—Ω»¯(ç•πç±’ëîÄÒÖ±ùΩ…•—°¥¯(ç•πç±’ëîÄÒçÕ—ë•π–¯(ç•πç±’ëîÄâç±ïÖπï…}¡Ω±•ç‰π†à((ç•ôπëïòÅ91%Q}19I}YIM%=8(çëïô•πîÅ91%Q}19I}YIM%=8Äàƒà(çïπë•ò(çëïô•πîÅ91%Q}]%8»°‡§Å0åç‡(çëïô•πîÅ91%Q}]%8°‡§Å91%Q}]%8»°‡§)Õ—Ö—•åÅçΩπÕ–Å›ç°Ö…}–®ÅçΩπÕ–Å≠!ï±¡ï…Yï…Õ•Ω∏ÄÙÅ91%Q}]%8°91%Q}19I}YIM%=8§Ï)Õ—Ö—•åÅçΩπÕ–Å›ç°Ö…}–®ÅçΩπÕ–Å≠IΩΩ—9ÖµîÄÙÅ0â8µ1•—îàÏ)Õ—Ö—•åÅçΩπÕ–Å›ç°Ö…}–®ÅçΩπÕ–Å≠QÖÕ≠A…ïô•‡ÄÙÅ0â8µ1•—îÅ±ïÖπï»ÄàÏ)Õ—Ö—•åÅçΩπÕ–Å›ç°Ö…}–®ÅçΩπÕ–Å≠QÖÕ≠Öç∞ÄÙÅ0â<È	È	È@°ÏÌÏÏÌMd§°ÏÌÏÏÌ	§°ÏÌI`ÏÏÌ	T§àÏ()’Õ•πúÅ9—E’ï…ÂMÂÕ∏ÄÙÅ1=9Ä°9QA$®§°U1=9∞ÅAY=%∞ÅU1=9∞ÅAU1=9§Ï)’Õ•πúÅ9—Mï—MÂÕ∏ÄÙÅ1=9Ä°9QA$®§°U1=9∞ÅAY=%∞ÅU1=9§Ï()Õ—Ö—•åÅÕ—êËÈ›Õ—…•πúÅ)Ω•∏°çΩπÕ–ÅÕ—êËÈ›Õ—…•πúòÅÑ∞ÅçΩπÕ–ÅÕ—êËÈ›Õ—…•πúòÅà§ÅÏ(ÄÄÄÅ…ï—’…∏ÅÑÄ¨Ä°Ñπïµ¡—‰†§ÅÒÅÑπâÖç¨†§ÄÙÙÅ0ùqpúÄ¸Å0ààÄËÅ0âqpà§Ä¨ÅàÏ)Ù()Õ—Ö—•åÅâΩΩ∞Å%Õëµ•∏†§ÅÏ(ÄÄÄÅ	==0ÅÂïÃÄÙÅ1MÏ(ÄÄÄÅAM%ÅÖëµ•πÃÄÙÅπ’±±¡—»Ï(ÄÄÄÅM%}%9Q%%I}UQ!=I%QdÅπ–ÄÙÅMUI%Qe}9Q}UQ!=I%QdÏ(ÄÄÄÅ•òÄ°±±ΩçÖ—ïπë%π•—•Ö±•ÈïM•ê†ôπ–∞Ä»∞ÅMUI%Qe}	U%1Q%9}=5%9}I%∞Å=5%9}1%M}I%}5%9L∞(ÄÄÄÄÄÄÄÄ¿∞Ä¿∞Ä¿∞Ä¿∞Ä¿∞Ä¿∞ÄôÖëµ•πÃ§§ÅÏ(ÄÄÄÄÄÄÄÅ°ïç≠QΩ≠ïπ5ïµâï…Õ°•¿°π’±±¡—»∞ÅÖëµ•πÃ∞ÄôÂïÃ§Ï(ÄÄÄÄÄÄÄÅ…ïïM•ê°Öëµ•πÃ§Ï(ÄÄÄÅÙ(ÄÄÄÅ…ï—’…∏ÅÂïÃÄÑÙÅ1MÏ)Ù()Õ—Ö—•åÅâΩΩ∞Å%Õ1ΩçÖ±MÂÕ—ï¥†§ÅÏ(ÄÄÄÅ!91Å—Ω≠ï∏ÄÙÅπ’±±¡—»Ï(ÄÄÄÅ•òÄ†Ö=¡ïπA…ΩçïÕÕQΩ≠ï∏°ï—’……ïπ—A…ΩçïÕÃ†§∞ÅQ=-9}EUId∞Äô—Ω≠ï∏§§Å…ï—’…∏ÅôÖ±ÕîÏ(ÄÄÄÅ]=IÅâÂ—ïÃÄÙÄ¿Ï(ÄÄÄÅï—QΩ≠ïπ%πôΩ…µÖ—•Ω∏°—Ω≠ï∏∞ÅQΩ≠ïπUÕï»∞Åπ’±±¡—»∞Ä¿∞ÄôâÂ—ïÃ§Ï(ÄÄÄÅÕ—êËÈŸïç—Ω»Ò	eQ¯Åâ’ôôï»°âÂ—ïÃ§Ï(ÄÄÄÅâΩΩ∞ÅÕÂÕ—ï¥ÄÙÅôÖ±ÕîÏ(ÄÄÄÅ•òÄ°âÂ—ïÃÄòòÅï—QΩ≠ïπ%πôΩ…µÖ—•Ω∏°—Ω≠ï∏∞ÅQΩ≠ïπUÕï»∞Åâ’ôôï»πëÖ—Ñ†§∞ÅâÂ—ïÃ∞ÄôâÂ—ïÃ§§ÅÏ(ÄÄÄÄÄÄÄÅÖ’—ºÅ’Õï»ÄÙÅ…ï•π—ï…¡…ï—}çÖÕ–ÒQ=-9}UMH®¯°â’ôôï»πëÖ—Ñ†§§Ï(ÄÄÄÄÄÄÄÅÕÂÕ—ï¥ÄÙÅ%Õ]ï±±-πΩ›πM•ê°’Õï»¥˘UÕï»πM•ê∞Å]•π1ΩçÖ±MÂÕ—ïµM•ê§ÄÑÙÅ1MÏ(ÄÄÄÅÙ(ÄÄÄÅ±ΩÕï!Öπë±î°—Ω≠ï∏§Ï(ÄÄÄÅ…ï—’…∏ÅÕÂÕ—ï¥Ï)Ù()Õ—Ö—•åÅÕ—êËÈ›Õ—…•πúÅA…Ωù…ÖµÖ—ÖIΩΩ–†§ÅÏ(ÄÄÄÅ]=IÅÕ•ÈîÄÙÅï—πŸ•…Ωπµïπ—YÖ…•Öâ±ï\°0âA…Ωù…ÖµÖ—Ñà∞Åπ’±±¡—»∞Ä¿§Ï(ÄÄÄÅ•òÄ†ÖÕ•ÈîÅÒÅÕ•ÈîÄ¯ÄÃ»‹ÿ‹§Å…ï—’…∏Å0ààÏ(ÄÄÄÅÕ—êËÈŸïç—Ω»Ò›ç°Ö…}–¯ÅŸÖ±’î°Õ•Èî§Ï(ÄÄÄÅ]=IÅçΩ¡•ïêÄÙÅï—πŸ•…Ωπµïπ—YÖ…•Öâ±ï\°0âA…Ωù…ÖµÖ—Ñà∞ÅŸÖ±’îπëÖ—Ñ†§∞ÅÕ•Èî§Ï(ÄÄÄÅ•òÄ†ÖçΩ¡•ïêÅÒÅçΩ¡•ïêÄ¯ÙÅÕ•Èî§Å…ï—’…∏Å0ààÏ(ÄÄÄÅ…ï—’…∏Å)Ω•∏°ŸÖ±’îπëÖ—Ñ†§∞Å≠IΩΩ—9Öµî§Ï)Ù()Õ—Ö—•åÅÕ—êËÈ›Õ—…•πúÅMï——•πùÕAÖ—†°çΩπÕ–ÅÕ—êËÈ›Õ—…•πúòÅ…ΩΩ–∞ÅçΩπÕ–ÅÕ—êËÈ›Õ—…•πúòÅÕ•ê§ÅÏ(ÄÄÄÅ…ï—’…∏Å)Ω•∏°…ΩΩ–∞Å0âÕï——•πùÃ¥àÄ¨ÅÕ•êÄ¨Å0àπ—·–à§Ï)Ù()Õ—Ö—•åÅÕ—êËÈ›Õ—…•πúÅM—Ö—’ÕAÖ—†°çΩπÕ–ÅÕ—êËÈ›Õ—…•πúòÅ…ΩΩ–∞ÅçΩπÕ–ÅÕ—êËÈ›Õ—…•πúòÅÕ•ê§ÅÏ(ÄÄÄÅ…ï—’…∏Å)Ω•∏°…ΩΩ–∞Å0âÕ—Ö—’Ã¥àÄ¨ÅÕ•êÄ¨Å0àπ—·–à§Ï)Ù()Õ—Ö—•åÅÕ—êËÈ›Õ—…•πúÅQÖÕ≠9Öµî°çΩπÕ–ÅÕ—êËÈ›Õ—…•πúòÅÕ•ê§ÅÏ(ÄÄÄÅ…ï—’…∏ÅÕ—êËÈ›Õ—…•πú°≠QÖÕ≠A…ïô•‡§Ä¨ÅÕ•êÏ)Ù()Õ—Ö—•åÅÕ—êËÈ›Õ—…•πúÅE’Ω—ï…ú°çΩπÕ–ÅÕ—êËÈ›Õ—…•πúòÅŸÖ±’î§ÅÏ(ÄÄÄÅÕ—êËÈ›Õ—…•πúÅΩ’–ÄÙÅ0âpààÏ(ÄÄÄÅÕ•Èï}–ÅÕ±ÖÕ°ïÃÄÙÄ¿Ï(ÄÄÄÅôΩ»Ä°›ç°Ö…}–Åç†ÄËÅŸÖ±’î§ÅÏ(ÄÄÄÄÄÄÄÅ•òÄ°ç†ÄÙÙÅ0ùqpú§ÅÏÄ¨≠Õ±ÖÕ°ïÃÏÅçΩπ—•π’îÏÅÙ(ÄÄÄÄÄÄÄÅ•òÄ°ç†ÄÙÙÅ0ùpàú§ÅÏ(ÄÄÄÄÄÄÄÄÄÄÄÅΩ’–πÖ¡¡ïπê°Õ±ÖÕ°ïÃÄ®Ä»Ä¨Äƒ∞Å0ùqpú§Ï(ÄÄÄÄÄÄÄÄÄÄÄÅΩ’–π¡’Õ°}âÖç¨°0ùpàú§Ï(ÄÄÄÄÄÄÄÄÄÄÄÅÕ±ÖÕ°ïÃÄÙÄ¿Ï(ÄÄÄÄÄÄÄÄÄÄÄÅçΩπ—•π’îÏ(ÄÄÄÄÄÄÄÅÙ(ÄÄÄÄÄÄÄÅΩ’–πÖ¡¡ïπê°Õ±ÖÕ°ïÃ∞Å0ùqpú§Ï(ÄÄÄÄÄÄÄÅÕ±ÖÕ°ïÃÄÙÄ¿Ï(ÄÄÄÄÄÄÄÅΩ’–π¡’Õ°}âÖç¨°ç†§Ï(ÄÄÄÅÙ(ÄÄÄÅΩ’–πÖ¡¡ïπê°Õ±ÖÕ°ïÃÄ®Ä»∞Å0ùqpú§Ï(ÄÄÄÅΩ’–π¡’Õ°}âÖç¨°0ùpàú§Ï(ÄÄÄÅ…ï—’…∏ÅΩ’–Ï)Ù()Õ—Ö—•åÅâΩΩ∞ÅI’πMç°—ÖÕ≠Ã°çΩπÕ–ÅÕ—êËÈŸïç—Ω»ÒÕ—êËÈ›Õ—…•πú¯òÅÖ…ùÃ§ÅÏ(ÄÄÄÅ›ç°Ö…}–ÅÕÂÕ—ïµ•…m5a}AQ!uÌÙÏ(ÄÄÄÅ•òÄ†Öï—MÂÕ—ïµ•…ïç—Ω…Â\°ÕÂÕ—ïµ•»∞Å5a}AQ §§Å…ï—’…∏ÅôÖ±ÕîÏ(ÄÄÄÅÕ—êËÈ›Õ—…•πúÅçΩµµÖπêÄÙÅE’Ω—ï…ú°)Ω•∏°ÕÂÕ—ïµ•»∞Å0âÕç°—ÖÕ≠Ãπï·îà§§Ï(ÄÄÄÅôΩ»Ä°çΩπÕ–ÅÖ’—ºòÅÖ…úÄËÅÖ…ùÃ§ÅÏÅçΩµµÖπêπ¡’Õ°}âÖç¨°0úÄú§ÏÅçΩµµÖπêÄ¨ÙÅE’Ω—ï…ú°Ö…ú§ÏÅÙ(ÄÄÄÅMQIQUA%9=\ÅÕ•ÌÙÏ(ÄÄÄÅÕ§πçàÄÙÅÕ•ÈïΩò°Õ§§Ï(ÄÄÄÅÕ§πë›±ÖùÃÄÙÅMQIQ}UMM!=]]%9=\Ï(ÄÄÄÅÕ§π›M°Ω›]•πëΩ‹ÄÙÅM]}!%Ï(ÄÄÄÅAI=MM}%9=I5Q%=8Å¡•ÌÙÏ(ÄÄÄÅ•òÄ†Ö…ïÖ—ïA…ΩçïÕÕ\°π’±±¡—»∞ÄôçΩµµÖπël¡t∞Åπ’±±¡—»∞Åπ’±±¡—»∞Å1M∞ÅIQ}9=}]%9=\∞(ÄÄÄÄÄÄÄÅπ’±±¡—»∞Åπ’±±¡—»∞ÄôÕ§∞Äô¡§§§Å…ï—’…∏ÅôÖ±ÕîÏ(ÄÄÄÅ]=IÅ›Ö•–ÄÙÅ]Ö•—Ω…M•πù±ï=â©ïç–°¡§π°A…ΩçïÕÃ∞ÄÃ¿¿¿¿§∞ÅçΩëîÄÙÄƒÏ(ÄÄÄÅ•òÄ°›Ö•–ÄÙÙÅ]%Q}=	)Q|¿§Åï—·•—ΩëïA…ΩçïÕÃ°¡§π°A…ΩçïÕÃ∞ÄôçΩëî§Ï(ÄÄÄÅï±ÕîÅQï…µ•πÖ—ïA…ΩçïÕÃ°¡§π°A…ΩçïÕÃ∞Äƒ§Ï(ÄÄÄÅ±ΩÕï!Öπë±î°¡§π°Q°…ïÖê§Ï(ÄÄÄÅ±ΩÕï!Öπë±î°¡§π°A…ΩçïÕÃ§Ï(ÄÄÄÅ…ï—’…∏Å›Ö•–ÄÙÙÅ]%Q}=	)Q|¿ÄòòÅçΩëîÄÙÙÄ¿Ï)Ù()Õ—Ö—•åÅâΩΩ∞Å¡¡±ÂÖç∞°!91ÅΩâ©ïç–∞ÅçΩπÕ–ÅÕ—êËÈ›Õ—…•πúòÅÕëë∞§ÅÏ(ÄÄÄÅAMUI%Qe}MI%AQ=HÅëïÕç…•¡—Ω»ÄÙÅπ’±±¡—»Ï(ÄÄÄÅ•òÄ†ÖΩπŸï…—M—…•πùMïç’…•—ÂïÕç…•¡—Ω…QΩMïç’…•—ÂïÕç…•¡—Ω…\°Õëë∞πç}Õ—»†§∞ÅM1}IY%M%=9|ƒ∞(ÄÄÄÄÄÄÄÄôëïÕç…•¡—Ω»∞Åπ’±±¡—»§§Å…ï—’…∏ÅôÖ±ÕîÏ(ÄÄÄÅ	==0Å¡…ïÕïπ–ÄÙÅ1M∞ÅëïôÖ’±—ïêÄÙÅ1M∞ÅΩ›πï…ïôÖ’±—ïêÄÙÅ1MÏ(ÄÄÄÅA0ÅëÖç∞ÄÙÅªè5⁄⁄$z{-ÆÈ‹j◊ùÁV∆«G#∞¢ñbÇVW'ï7ó7FV“í&WGW&‚f«6S∞¢7ó7FV‘÷V÷˜'î∆ó7DñÊfÚñÊf˜∑”∞¢TƒÙ‰r&WGW&ÊVB“∞¢ñbáVW'ï7ó7FV“ÉÉ¬fñÊfÚ¬6ó¶VˆbÜñÊfÚí¬g&WGW&ÊVBí¬í&WGW&‚f«6S∞¢5ï5DT’Ùî‰dÚ7ó7FV◊∑”∞¢vWE7ó7FV‘ñÊfÚÇg7ó7FV“ì∞¢6ˆÁ7BVñÁCcE˜BvU6ó¶R“7ó7FV“ÊGuvU6ó¶RÚ7ó7FV“ÊGuvU6ó¶R¢Cìc∞¢'óFW2“7FÊF'î'óFW4g&ˆ’vT6˜VÁG2ÜñÊfÚ¬7FFñ5ˆ67C«VñÁC3%˜C‚ávU6ó¶Ríì∞¢&WGW&‚G'VS∞ß–†ß7FFñ2&ˆˆ¬'V‚Ü6ˆÁ7B7FC£ßw7G&ñÊrb6ñBí∞¢ñbÇó4∆ˆ6≈7ó7FV“Çí«¬ó5f∆ñD6∆VÊW%6ñBá6ñBíí&WGW&‚f«6S∞¢4îB6ñD÷V÷˜'í“ÁV∆«G#∞¢ñbÇ6ˆÁfW'E7G&ñÊu6ñEFı6ñErá6ñBÊ5˜7G"Çí¬g6ñD÷V÷˜'ííí&WGW&‚f«6S∞¢∆ˆ6ƒg&VRá6ñD÷V÷˜'íì∞¢6ˆÁ7B7FC£ßw7G&ñÊr&ˆ˜B“&ˆw&‘FF&ˆ˜BÇì∞¢ñbá&ˆ˜BÊV◊GíÇíí&WGW&‚f«6S∞¢Ñ‰DƒR◊WFWÇ“7&VFT◊WFWÖrÜÁV∆«G"¬d≈4R¬Ñ¬$v∆ˆ&≈≈ƒ‚‘∆óFR‘6∆VÊW"“"≤6ñBíÊ5˜7G"Çíì∞¢ñbÇ◊WFWÇí&WGW&‚f«6S∞¢Etı$B∆ˆ6≤“vóDf˜%6ñÊv∆Tˆ&¶V7BÜ◊WFWÇ¬ì∞¢ñbÜ∆ˆ6≤“tïEÙÙ$§T5EÛbb∆ˆ6≤“tïEÙ$‰DÙ‰TBí≤6∆˜6TÜÊF∆RÜ◊WFWÇì≤&WGW&‚G'VS≤–†¢7FC£ßw7G&ñÊr6WGFñÊw5FWáB¬7FGW5FWáC∞¢6∆VÊW%6WGFñÊw26WGFñÊw3∞¢6∆VÊW%7FGW27FGW3∞¢6ˆÁ7B&ˆˆ¬&VDˆ≤“&VEFWáDfñ∆RÖ6WGFñÊw5FÇá&ˆ˜B¬6ñBí¬6WGFñÊw5FWáBíb`¢'6T6∆VÊW%6WGFñÊw2á6WGFñÊw5FWáB¬6WGFñÊw2íbb&VEFWáDfñ∆RÖ7FGW5FÇá&ˆ˜B¬6ñBí¬7FGW5FWáBíb`¢'6T6∆VÊW%7FGW2á7FGW5FWáB¬7FGW2ì∞¢ñbÇ&VDˆ≤í≤&V∆V6T◊WFWÇÜ◊WFWÇì≤6∆˜6TÜÊF∆RÜ◊WFWÇì≤&WGW&‚f«6S≤–†¢&ˆˆ¬6ÜÊvVB“f«6S∞¢ñbá6WGFñÊw2Ê÷ÁV≈&WVW7DñB‚7FGW2Ê6ˆ◊∆WFVD÷ÁV≈&WVW7DñBí∞¢ƒÙ‰r&W7V«B“W&vU7FÊF'íÇì∞¢7FGW2Ê6ˆ◊∆WFVD÷ÁV≈&WVW7DñB“6WGFñÊw2Ê÷ÁV≈&WVW7DñC∞¢7FGW2Ê∆7D÷ÁV≈7FGW2“7FFñ5ˆ67C∆ñÁC3%˜C‚á&W7V«Bì∞¢6ÜÊvVB“G'VS∞¢“V«6Rñbá6WGFñÊw2ÊVÊ&∆VBí∞¢VñÁCcE˜B7FÊF'í“∞¢ñbÖ&VE7FÊF'î'óFW2á7FÊF'ííí∞¢6ˆÁ7BVñÁCcE˜BÊ˜r“vWEFñ6¥6˜VÁCcBÇì∞¢ñbá7FÊF'í¬7FFñ5ˆ67C«VñÁCcE˜C‚á6WGFñÊw2ÁFá&W6Üˆ∆D÷"í¢#GR¢#GRí∞¢ñbÇ7FGW2ÊWFÙ&÷VBí≤7FGW2ÊWFÙ&÷VB“G'VS≤6ÜÊvVB“G'VS≤–¢“V«6RñbÖ6Ü˜V∆E'V‰WFÙ6∆V‚á6WGFñÊw2¬7FÊF'í¬Ê˜r¬7FGW2Ê∆7DWFıFñ6≤¬7FGW2ÊWFÙ&÷VBíí∞¢ƒÙ‰r&W7V«B“W&vU7FÊF'íÇì∞¢7FGW2Ê∆7DWFıFñ6≤“Ê˜s∞¢7FGW2Ê∆7DWFı7FGW2“7FFñ5ˆ67C∆ñÁC3%˜C‚á&W7V«Bì∞¢ñbá&W7V«B„“í7FGW2ÊWFÙ&÷VB“f«6S∞¢6ÜÊvVB“G'VS∞¢–¢–¢–¢ñbÜ6ÜÊvVBí7FGW2ÊÜV«W%fW'6ñˆ‚“∞¢&ˆˆ¬w&˜FR“6ÜÊvVB«¬w&óFUFWáDfñ∆RÖ7FGW5FÇá&ˆ˜B¬6ñBí¬6W&ñ∆ó¶T6∆VÊW%7FGW2á7FGW2íì∞¢&V∆V6T◊WFWÇÜ◊WFWÇì∞¢6∆˜6TÜÊF∆RÜ◊WFWÇì∞¢&WGW&‚w&˜FS∞ß–†ß7FFñ2&ˆˆ¬VÊñÁ7F∆¬Ü6ˆÁ7B7FC£ßw7G&ñÊrb6ñBí∞¢ñbÇó4F÷ñ‚Çí«¬ó5f∆ñD6∆VÊW%6ñBá6ñBíí&WGW&‚f«6S∞¢6ˆÁ7B7FC£ßw7G&ñÊr&ˆ˜B“&ˆw&‘FF&ˆ˜BÇì∞¢ñbá&ˆ˜BÊV◊GíÇíí&WGW&‚f«6S∞¢6ˆÁ7B7FC£ßw7G&ñÊrF6≤“F6¥Ê÷Rá6ñBì∞¢&ˆˆ¬ˆ≤“'VÂ66áF6∑2á¥¬"ÙFV∆WFR"¬¬"Ùb"¬¬"ıD‚"¬F6∑“ì∞¢ñbÇˆ≤bb'VÂ66áF6∑2á¥¬"ıVW'í"¬¬"ıD‚"¬F6∑“íí&WGW&‚f«6S∞¢ˆ≤“G'VS∞¢6ˆÁ7B7FC£ßw7G&ñÊr6WGFñÊw2“6WGFñÊw5FÇá&ˆ˜B¬6ñBí¬7FGW2“7FGW5FÇá&ˆ˜B¬6ñBì∞¢ñbÑvWDfñ∆TGG&ñ'WFW5rá6WGFñÊw2Ê5˜7G"Çíí“îÂdƒîEÙdîƒUÙEE$î%UDU2bbFV∆WFTfñ∆Urá6WGFñÊw2Ê5˜7G"Çíííˆ≤“f«6S∞¢ñbÑvWDfñ∆TGG&ñ'WFW5rá7FGW2Ê5˜7G"Çíí“îÂdƒîEÙdîƒUÙEE$î%UDU2bbFV∆WFTfñ∆Urá7FGW2Ê5˜7G"Çíííˆ≤“f«6S∞¢tî„3%Ùdî‰EÙDDrFF∑”∞¢Ñ‰DƒRfñÊB“fñÊDfó'7Dfñ∆UrÑ¶ˆñ‚á&ˆ˜B¬¬'6WGFñÊw2“¢ÁGáB"íÊ5˜7G"Çí¬fFFì∞¢&ˆˆ¬&V÷ñÊñÊr“f«6S∞¢ñbÜfñÊB“îÂdƒîEÙÑ‰DƒUıd≈TRí∞¢FÚ≤ñbÇÜFFÊGtfñ∆TGG&ñ'WFW2bdîƒUÙEE$î%UDUÙDï$T5Dı%ííí≤&V÷ñÊñÊr“G'VS≤'&V≥≤“–¢vÜñ∆RÑfñÊDÊWáDfñ∆UrÜfñÊB¬fFFíì∞¢fñÊD6∆˜6RÜfñÊBì∞¢–¢ñbÇ&V÷ñÊñÊrí∞¢FV∆WFTfñ∆UrÑ¶ˆñ‚á&ˆ˜B¬¬&ÜV«W"◊fW'6ñˆ‚ÁGáB"íÊ5˜7G"Çíì∞¢7FC£ßw7G&ñÊrñÁ7F∆∆VB“¶ˆñ‚á&ˆ˜B¬¬$‚‘∆óFR‘6∆VÊW"ÊWÜR"ì∞¢ñbÇFV∆WFTfñ∆UrÜñÁ7F∆∆VBÊ5˜7G"Çííí÷˜fTfñ∆TWÖrÜñÁ7F∆∆VBÊ5˜7G"Çí¬ÁV∆«G"¬‘ıdTdîƒUÙDTƒïıTÂDî≈ı$T$ÙıBì∞¢&V÷˜fTFó&V7F˜'ïrá&ˆ˜BÊ5˜7G"Çíì∞¢–¢&WGW&‚ˆ≥∞ß–†¶ñÁBtî‰íuvñ‰÷ñ‚ÑÑîÂ5D‰4R¬ÑîÂ5D‰4R¬u5E"¬ñÁBí∞¢ñÁB&v2“∞¢≈u5E"¢&wb“6ˆ÷÷ÊD∆ñÊUFÙ&werÑvWD6ˆ÷÷ÊD∆ñÊUrÇí¬f&v2ì∞¢ñbÇ&wbí&WGW&‚#∞¢&ˆˆ¬ˆ≤“f«6S∞¢ñbÜ&v2”“2bbv766◊Ü&we≥“¬¬"“÷ñÁ7F∆¬"í”“íˆ≤“ñÁ7F∆¬Ü&we≥%“ì∞¢V«6RñbÜ&v2”“2bbv766◊Ü&we≥“¬¬"“◊'V‚"í”“íˆ≤“'V‚Ü&we≥%“ì∞¢V«6RñbÜ&v2”“2bbv766◊Ü&we≥“¬¬"“◊VÊñÁ7F∆¬"í”“íˆ≤“VÊñÁ7F∆¬Ü&we≥%“ì∞¢∆ˆ6ƒg&VRÜ&wbì∞¢&WGW&‚ˆ≤Ú¢∞ß–
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#ifndef WIN32_WINNT
+#define WIN32_WINNT 0x0A00
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#include <sddl.h>
+#include <aclapi.h>
+#include <taskschd.h>
+#include <oleauto.h>
+#include <tlhelp32.h>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cstdint>
+#include "cleaner_policy.h"
+
+#ifndef NLITE_CLEANER_VERSION
+#define NLITE_CLEANER_VERSION "1"
+#endif
+#define NLITE_WIDEN2(x) L##x
+#define NLITE_WIDEN(x) NLITE_WIDEN2(x)
+static const wchar_t* const kHelperVersion = NLITE_WIDEN(NLITE_CLEANER_VERSION);
+static const wchar_t* const kRootName = L"N-Lite";
+static const wchar_t* const kTaskPrefix = L"N-Lite Cleaner ";
+static const wchar_t* const kTaskDacl = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)";
+
+using NtQuerySysFn = LONG (NTAPI*)(ULONG, PVOID, ULONG, PULONG);
+using NtSetSysFn = LONG (NTAPI*)(ULONG, PVOID, ULONG);
+
+static std::wstring Join(const std::wstring& a, const std::wstring& b) {
+    return a + (a.empty() || a.back() == L'\\' ? L"" : L"\\") + b;
+}
+
+static bool IsAdmin() {
+    BOOL yes = FALSE;
+    PSID admins = nullptr;
+    SID_IDENTIFIER_AUTHORITY nt = SECURITY_NT_AUTHORITY;
+    if (AllocateAndInitializeSid(&nt, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS,
+        0, 0, 0, 0, 0, 0, &admins)) {
+        CheckTokenMembership(nullptr, admins, &yes);
+        FreeSid(admins);
+    }
+    return yes != FALSE;
+}
+
+static bool IsLocalSystem() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    DWORD bytes = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &bytes);
+    std::vector<BYTE> buffer(bytes);
+    bool system = false;
+    if (bytes && GetTokenInformation(token, TokenUser, buffer.data(), bytes, &bytes)) {
+        auto user = reinterpret_cast<TOKEN_USER*>(buffer.data());
+        system = IsWellKnownSid(user->User.Sid, WinLocalSystemSid) != FALSE;
+    }
+    CloseHandle(token);
+    return system;
+}
+
+static std::wstring ProgramDataRoot() {
+    DWORD size = GetEnvironmentVariableW(L"ProgramData", nullptr, 0);
+    if (!size || size > 32767) return L"";
+    std::vector<wchar_t> value(size);
+    DWORD copied = GetEnvironmentVariableW(L"ProgramData", value.data(), size);
+    if (!copied || copied >= size) return L"";
+    return Join(value.data(), kRootName);
+}
+
+static std::wstring SettingsPath(const std::wstring& root, const std::wstring& sid) {
+    return Join(root, L"settings-" + sid + L".txt");
+}
+
+static std::wstring StatusPath(const std::wstring& root, const std::wstring& sid) {
+    return Join(root, L"status-" + sid + L".txt");
+}
+
+static std::wstring TaskName(const std::wstring& sid) {
+    return std::wstring(kTaskPrefix) + sid;
+}
+
+static std::wstring QuoteArg(const std::wstring& value) {
+    std::wstring out = L"\"";
+    size_t slashes = 0;
+    for (wchar_t ch : value) {
+        if (ch == L'\\') { ++slashes; continue; }
+        if (ch == L'\"') {
+            out.append(slashes * 2 + 1, L'\\');
+            out.push_back(L'\"');
+            slashes = 0;
+            continue;
+        }
+        out.append(slashes, L'\\');
+        slashes = 0;
+        out.push_back(ch);
+    }
+    out.append(slashes * 2, L'\\');
+    out.push_back(L'\"');
+    return out;
+}
+
+static bool RunSchtasks(const std::vector<std::wstring>& args) {
+    wchar_t systemDir[MAX_PATH]{};
+    if (!GetSystemDirectoryW(systemDir, MAX_PATH)) return false;
+    std::wstring command = QuoteArg(Join(systemDir, L"schtasks.exe"));
+    for (const auto& arg : args) { command.push_back(L' '); command += QuoteArg(arg); }
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, &command[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+        nullptr, nullptr, &si, &pi)) return false;
+    DWORD wait = WaitForSingleObject(pi.hProcess, 30000), code = 1;
+    if (wait == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
+    else TerminateProcess(pi.hProcess, 1);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return wait == WAIT_OBJECT_0 && code == 0;
+}
+
+static bool ApplyDacl(HANDLE object, const std::wstring& sddl) {
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1,
+        &descriptor, nullptr)) return false;
+    BOOL present = FALSE, defaulted = FALSE, ownerDefaulted = FALSE;
+    PACL dacl = nullptr;
+    PSID owner = nullptr;
+    bool ok = GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) && present && dacl &&
+        GetSecurityDescriptorOwner(descriptor, &owner, &ownerDefaulted) && owner;
+    if (ok) {
+        DWORD result = SetSecurityInfo(object, SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            owner, nullptr, dacl, nullptr);
+        ok = result == ERROR_SUCCESS;
+    }
+    LocalFree(descriptor);
+    return ok;
+}
+
+static HANDLE OpenNoReparse(const std::wstring& path, DWORD access, DWORD share, DWORD disposition,
+                            DWORD flags, const SECURITY_ATTRIBUTES* security = nullptr) {
+    HANDLE file = CreateFileW(path.c_str(), access, share, const_cast<SECURITY_ATTRIBUTES*>(security),
+        disposition, flags | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return INVALID_HANDLE_VALUE;
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(file, &info) || (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        CloseHandle(file);
+        SetLastError(ERROR_REPARSE_TAG_INVALID);
+        return INVALID_HANDLE_VALUE;
+    }
+    return file;
+}
+
+static bool IsExpectedProtectedDirectory(HANDLE directory) {
+    PSID owner = nullptr;
+    PACL dacl = nullptr;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    DWORD result = GetSecurityInfo(directory, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        &owner, nullptr, &dacl, nullptr, &descriptor);
+    if (result != ERROR_SUCCESS || !descriptor || !owner || !dacl) {
+        if (descriptor) LocalFree(descriptor);
+        return false;
+    }
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    bool ok = GetSecurityDescriptorControl(descriptor, &control, &revision) && (control & SE_DACL_PROTECTED) &&
+        (IsWellKnownSid(owner, WinBuiltinAdministratorsSid) || IsWellKnownSid(owner, WinLocalSystemSid));
+    BYTE systemStorage[SECURITY_MAX_SID_SIZE]{}, adminStorage[SECURITY_MAX_SID_SIZE]{}, usersStorage[SECURITY_MAX_SID_SIZE]{};
+    DWORD systemSize = sizeof(systemStorage), adminSize = sizeof(adminStorage), usersSize = sizeof(usersStorage);
+    PSID systemSid = systemStorage, adminSid = adminStorage, usersSid = usersStorage;
+    ok = ok && CreateWellKnownSid(WinLocalSystemSid, nullptr, systemSid, &systemSize) &&
+        CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, adminSid, &adminSize) &&
+        CreateWellKnownSid(WinBuiltinUsersSid, nullptr, usersSid, &usersSize);
+    unsigned systemCount = 0, adminCount = 0, usersCount = 0;
+    for (DWORD i = 0; ok && i < dacl->AceCount; ++i) {
+        void* rawAce = nullptr;
+        if (!GetAce(dacl, i, &rawAce) || !rawAce) { ok = false; break; }
+        auto header = static_cast<ACE_HEADER*>(rawAce);
+        if (header->AceType != ACCESS_ALLOWED_ACE_TYPE) { ok = false; break; }
+        auto ace = static_cast<ACCESS_ALLOWED_ACE*>(rawAce);
+        PSID trustee = reinterpret_cast<PSID>(&ace->SidStart);
+        if (EqualSid(trustee, systemSid) && ace->Mask == FILE_ALL_ACCESS) ++systemCount;
+        else if (EqualSid(trustee, adminSid) && ace->Mask == FILE_ALL_ACCESS) ++adminCount;
+        else if (EqualSid(trustee, usersSid) && ace->Mask == (FILE_GENERIC_READ | FILE_GENERIC_EXECUTE) &&
+            (header->AceFlags & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)) == (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)) ++usersCount;
+        else ok = false;
+    }
+    ok = ok && dacl->AceCount == 3 && systemCount == 1 && adminCount == 1 && usersCount == 1;
+    LocalFree(descriptor);
+    return ok;
+}
+
+static bool SecureDirectory(const std::wstring& path, const std::wstring& sddl) {
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1,
+        &descriptor, nullptr)) return false;
+    SECURITY_ATTRIBUTES security{};
+    security.nLength = sizeof(security);
+    security.lpSecurityDescriptor = descriptor;
+    bool created = CreateDirectoryW(path.c_str(), &security) != FALSE;
+    DWORD createError = created ? ERROR_SUCCESS : GetLastError();
+    if (!created && createError != ERROR_ALREADY_EXISTS) {
+        LocalFree(descriptor);
+        return false;
+    }
+    LocalFree(descriptor);
+    HANDLE directory = OpenNoReparse(path, READ_CONTROL | WRITE_DAC | WRITE_OWNER,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS);
+    if (directory == INVALID_HANDLE_VALUE) return false;
+    bool ok = (created || IsExpectedProtectedDirectory(directory)) && ApplyDacl(directory, sddl);
+    CloseHandle(directory);
+    return ok;
+}
+
+static bool SecureFile(const std::wstring& path, const std::wstring& sddl, DWORD access,
+                       const std::wstring& initialContents) {
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1,
+        &descriptor, nullptr)) return false;
+    SECURITY_ATTRIBUTES security{};
+    security.nLength = sizeof(security);
+    security.lpSecurityDescriptor = descriptor;
+    HANDLE file = OpenNoReparse(path, access | GENERIC_READ | GENERIC_WRITE | READ_CONTROL | WRITE_DAC | WRITE_OWNER, FILE_SHARE_READ,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, &security);
+    LocalFree(descriptor);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    bool ok = ApplyDacl(file, sddl);
+    LARGE_INTEGER size{};
+    if (ok && GetFileSizeEx(file, &size) && size.QuadPart == 0 && !initialContents.empty()) {
+        DWORD written = 0;
+        ok = WriteFile(file, initialContents.data(), static_cast<DWORD>(initialContents.size() * sizeof(wchar_t)),
+            &written, nullptr) && written == initialContents.size() * sizeof(wchar_t);
+    }
+    CloseHandle(file);
+    return ok;
+}
+
+static bool ReadTextFile(const std::wstring& path, std::wstring& text) {
+    HANDLE file = OpenNoReparse(path, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER size{};
+    bool ok = GetFileSizeEx(file, &size) && size.QuadPart >= 0 && size.QuadPart <= 32768 &&
+        (size.QuadPart % sizeof(wchar_t)) == 0;
+    std::vector<wchar_t> buffer(ok ? static_cast<size_t>(size.QuadPart / sizeof(wchar_t)) + 1 : 1, L'\0');
+    DWORD read = 0;
+    if (ok && size.QuadPart) ok = ReadFile(file, buffer.data(), static_cast<DWORD>(size.QuadPart), &read, nullptr) &&
+        read == static_cast<DWORD>(size.QuadPart);
+    if (ok) text.assign(buffer.data(), read / sizeof(wchar_t));
+    CloseHandle(file);
+    return ok;
+}
+
+static bool WriteTextFile(const std::wstring& path, const std::wstring& text) {
+    HANDLE file = OpenNoReparse(path, GENERIC_WRITE, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER zero{};
+    bool ok = SetFilePointerEx(file, zero, nullptr, FILE_BEGIN) && SetEndOfFile(file);
+    DWORD written = 0;
+    const DWORD bytes = static_cast<DWORD>(text.size() * sizeof(wchar_t));
+    if (ok) ok = WriteFile(file, text.data(), bytes, &written, nullptr) && written == bytes && FlushFileBuffers(file);
+    CloseHandle(file);
+    return ok;
+}
+
+static bool CurrentHelperPath(std::wstring& path) {
+    std::vector<wchar_t> buffer(32768);
+    DWORD size = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (!size || size >= buffer.size()) return false;
+    path.assign(buffer.data(), size);
+    return true;
+}
+
+static bool InstallTask(const std::wstring& helperPath, const std::wstring& sid) {
+    const std::wstring task = TaskName(sid);
+    const std::wstring action = QuoteArg(helperPath) + L" --run " + sid;
+    if (!RunSchtasks({L"/Create", L"/F", L"/SC", L"MINUTE", L"/MO", L"1", L"/TN", task,
+                      L"/TR", action, L"/RU", L"SYSTEM", L"/RL", L"HIGHEST"})) return false;
+
+    HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool uninitialize = SUCCEEDED(init);
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) return false;
+    ITaskService* service = nullptr;
+    ITaskFolder* folder = nullptr;
+    IRegisteredTask* registered = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ITaskService, reinterpret_cast<void**>(&service));
+    VARIANT empty;
+    VariantInit(&empty);
+    if (SUCCEEDED(hr)) hr = service->Connect(empty, empty, empty, empty);
+    BSTR rootName = SysAllocString(L"\\");
+    if (SUCCEEDED(hr) && rootName) hr = service->GetFolder(rootName, &folder);
+    else if (SUCCEEDED(hr)) hr = E_OUTOFMEMORY;
+    if (rootName) SysFreeString(rootName);
+    BSTR taskName = SysAllocString(task.c_str());
+    if (SUCCEEDED(hr) && taskName) hr = folder->GetTask(taskName, &registered);
+    else if (SUCCEEDED(hr)) hr = E_OUTOFMEMORY;
+    if (taskName) SysFreeString(taskName);
+    BSTR acl = SysAllocString(kTaskDacl);
+    if (SUCCEEDED(hr) && acl) hr = registered->SetSecurityDescriptor(acl, 0);
+    if (acl) SysFreeString(acl);
+    BSTR actual = nullptr;
+    if (SUCCEEDED(hr)) hr = registered->GetSecurityDescriptor(
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &actual);
+    if (SUCCEEDED(hr)) {
+        std::wstring descriptor(actual ? actual : L"");
+        if (!HasExpectedCleanerTaskSecurityDescriptor(descriptor)) hr = E_ACCESSDENIED;
+    }
+    if (actual) SysFreeString(actual);
+    if (registered) registered->Release();
+    if (folder) folder->Release();
+    if (service) service->Release();
+    if (uninitialize) CoUninitialize();
+    if (FAILED(hr)) RunSchtasks({L"/Delete", L"/F", L"/TN", task});
+    return SUCCEEDED(hr);
+}
+
+static bool Install(const std::wstring& sid) {
+    if (!IsAdmin()) return false;
+    PSID sidMemory = nullptr;
+    if (!IsValidCleanerSid(sid) || !ConvertStringSidToSidW(sid.c_str(), &sidMemory)) return false;
+    LocalFree(sidMemory);
+
+    const std::wstring root = ProgramDataRoot();
+    if (root.empty()) return false;
+    const std::wstring rootAcl = L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)";
+    if (!SecureDirectory(root, rootAcl)) return false;
+
+    std::wstring source;
+    if (!CurrentHelperPath(source)) return false;
+    const std::wstring installed = Join(root, L"N-Lite-Cleaner.exe");
+    DWORD attrs = GetFileAttributesW(installed.c_str());
+    if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+    if (_wcsicmp(source.c_str(), installed.c_str()) != 0 && !CopyFileW(source.c_str(), installed.c_str(), FALSE)) return false;
+    const std::wstring helperAcl = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)";
+    HANDLE helper = OpenNoReparse(installed, READ_CONTROL | WRITE_DAC | WRITE_OWNER,
+        FILE_SHARE_READ | FILE_SHARE_DELETE, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    if (helper == INVALID_HANDLE_VALUE) return false;
+    bool secured = ApplyDacl(helper, helperAcl);
+    CloseHandle(helper);
+    if (!secured) return false;
+
+    const std::wstring userAce = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x12019f;;;" + sid + L")";
+    const std::wstring readAce = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x120089;;;" + sid + L")";
+    const std::wstring config = SettingsPath(root, sid);
+    const std::wstring status = StatusPath(root, sid);
+    CleanerSettings defaults;
+    CleanerStatus empty;
+    empty.helperVersion = 1;
+    if (!SecureFile(config, userAce, GENERIC_READ | GENERIC_WRITE,
+                    SerializeCleanerSettings(defaults)) ||
+        !SecureFile(status, readAce, GENERIC_READ,
+                    SerializeCleanerStatus(empty))) return false;
+    std::wstring saved;
+    CleanerSettings checkedSettings;
+    if (!ReadTextFile(config, saved) || !ParseCleanerSettings(saved, checkedSettings)) {
+        if (!WriteTextFile(config, SerializeCleanerSettings(defaults))) return false;
+    }
+    CleanerStatus checkedStatus;
+    if (!ReadTextFile(status, saved) || !ParseCleanerStatus(saved, checkedStatus)) {
+        if (!WriteTextFile(status, SerializeCleanerStatus(empty))) return false;
+    }
+
+    if (!InstallTask(installed, sid)) return false;
+    const std::wstring versionPath = Join(root, L"helper-version.txt");
+    const std::wstring versionAcl = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GR;;;BU)";
+    if (!SecureFile(versionPath, versionAcl, GENERIC_READ, std::wstring(kHelperVersion) + L"\n") ||
+        !WriteTextFile(versionPath, std::wstring(kHelperVersion) + L"\n")) {
+        RunSchtasks({L"/Delete", L"/F", L"/TN", TaskName(sid)});
+        return false;
+    }
+    return true;
+}
+
+static LONG PurgeStandby() {
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll) return static_cast<LONG>(0xC0000002L);
+    auto setSystem = reinterpret_cast<NtSetSysFn>(GetProcAddress(ntdll, "NtSetSystemInformation"));
+    if (!setSystem) return static_cast<LONG>(0xC0000002L);
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES, &token))
+        return static_cast<LONG>(0xC0000022L);
+    LUID luid{};
+    if (!LookupPrivilegeValueW(nullptr, L"SeProfileSingleProcessPrivilege", &luid)) {
+        CloseHandle(token);
+        return static_cast<LONG>(0xC0000061L);
+    }
+    TOKEN_PRIVILEGES requested{};
+    requested.PrivilegeCount = 1;
+    requested.Privileges[0].Luid = luid;
+    requested.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    TOKEN_PRIVILEGES previous{};
+    DWORD previousSize = 0;
+    SetLastError(ERROR_SUCCESS);
+    if (!AdjustTokenPrivileges(token, FALSE, &requested, sizeof(previous), &previous, &previousSize)) {
+        CloseHandle(token);
+        return static_cast<LONG>(0xC0000022L);
+    }
+    if (GetLastError() == ERROR_NOT_ALL_ASSIGNED) {
+        CloseHandle(token);
+        return static_cast<LONG>(0xC0000061L);
+    }
+    ULONG command = 4; // MemoryPurgeStandbyList
+    LONG status = setSystem(80, &command, sizeof(command));
+    if (previous.PrivilegeCount) AdjustTokenPrivileges(token, FALSE, &previous, 0, nullptr, nullptr);
+    CloseHandle(token);
+    return status;
+}
+
+static bool ReadStandbyBytes(uint64_t& bytes) {
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    auto querySystem = ntdll ? reinterpret_cast<NtQuerySysFn>(GetProcAddress(ntdll, "NtQuerySystemInformation")) : nullptr;
+    if (!querySystem) return false;
+    SystemMemoryListInfo info{};
+    ULONG returned = 0;
+    if (querySystem(80, &info, sizeof(info), &returned) < 0) return false;
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const uint64_t pageSize = system.dwPageSize ? system.dwPageSize : 4096;
+    bytes = StandbyBytesFromPageCounts(info, static_cast<uint32_t>(pageSize));
+    return true;
+}
+
+static bool Run(const std::wstring& sid) {
+    if (!IsLocalSystem() || !IsValidCleanerSid(sid)) return false;
+    PSID sidMemory = nullptr;
+    if (!ConvertStringSidToSidW(sid.c_str(), &sidMemory)) return false;
+    LocalFree(sidMemory);
+    const std::wstring root = ProgramDataRoot();
+    if (root.empty()) return false;
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, (L"Global\\N-Lite-Cleaner-" + sid).c_str());
+    if (!mutex) return false;
+    DWORD lock = WaitForSingleObject(mutex, 0);
+    if (lock != WAIT_OBJECT_0 && lock != WAIT_ABANDONED) { CloseHandle(mutex); return true; }
+
+    std::wstring settingsText, statusText;
+    CleanerSettings settings;
+    CleanerStatus status;
+    const bool readOk = ReadTextFile(SettingsPath(root, sid), settingsText) &&
+        ParseCleanerSettings(settingsText, settings) && ReadTextFile(StatusPath(root, sid), statusText) &&
+        ParseCleanerStatus(statusText, status);
+    if (!readOk) { ReleaseMutex(mutex); CloseHandle(mutex); return false; }
+
+    bool changed = false;
+    if (settings.manualRequestId > status.completedManualRequestId) {
+        LONG result = PurgeStandby();
+        status.completedManualRequestId = settings.manualRequestId;
+        status.lastManualStatus = static_cast<int32_t>(result);
+        changed = true;
+    } else if (settings.enabled) {
+        uint64_t standby = 0;
+        if (ReadStandbyBytes(standby)) {
+            const uint64_t now = GetTickCount64();
+            if (standby < static_cast<uint64_t>(settings.thresholdMb) * 1024u * 1024u) {
+                if (!status.autoArmed) { status.autoArmed = true; changed = true; }
+            } else if (ShouldRunAutoClean(settings, standby, now, status.lastAutoTick, status.autoArmed)) {
+                LONG result = PurgeStandby();
+                status.lastAutoTick = now;
+                status.lastAutoStatus = static_cast<int32_t>(result);
+                if (result >= 0) status.autoArmed = false;
+                changed = true;
+            }
+        }
+    }
+    if (changed) status.helperVersion = 1;
+    bool wrote = !changed || WriteTextFile(StatusPath(root, sid), SerializeCleanerStatus(status));
+    ReleaseMutex(mutex);
+    CloseHandle(mutex);
+    return wrote;
+}
+
+static bool Uninstall(const std::wstring& sid) {
+    if (!IsAdmin() || !IsValidCleanerSid(sid)) return false;
+    const std::wstring root = ProgramDataRoot();
+    if (root.empty()) return false;
+    const std::wstring task = TaskName(sid);
+    bool ok = RunSchtasks({L"/Delete", L"/F", L"/TN", task});
+    if (!ok && RunSchtasks({L"/Query", L"/TN", task})) return false;
+    ok = true;
+    const std::wstring settings = SettingsPath(root, sid), status = StatusPath(root, sid);
+    if (GetFileAttributesW(settings.c_str()) != INVALID_FILE_ATTRIBUTES && !DeleteFileW(settings.c_str())) ok = false;
+    if (GetFileAttributesW(status.c_str()) != INVALID_FILE_ATTRIBUTES && !DeleteFileW(status.c_str())) ok = false;
+    WIN32_FIND_DATAW data{};
+    HANDLE find = FindFirstFileW(Join(root, L"settings-*.txt").c_str(), &data);
+    bool remaining = false;
+    if (find != INVALID_HANDLE_VALUE) {
+        do { if (!(data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) { remaining = true; break; } }
+        while (FindNextFileW(find, &data));
+        FindClose(find);
+    }
+    if (!remaining) {
+        DeleteFileW(Join(root, L"helper-version.txt").c_str());
+        std::wstring installed = Join(root, L"N-Lite-Cleaner.exe");
+        if (!DeleteFileW(installed.c_str())) MoveFileExW(installed.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+        RemoveDirectoryW(root.c_str());
+    }
+    return ok;
+}
+
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) return 2;
+    bool ok = false;
+    if (argc == 3 && wcscmp(argv[1], L"--install") == 0) ok = Install(argv[2]);
+    else if (argc == 3 && wcscmp(argv[1], L"--run") == 0) ok = Run(argv[2]);
+    else if (argc == 3 && wcscmp(argv[1], L"--uninstall") == 0) ok = Uninstall(argv[2]);
+    LocalFree(argv);
+    return ok ? 0 : 1;
+}
