@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.2"
+  #define MyAppVersion "0.2.3"
 #endif
 
 #define MyAppName "N-Lite"
@@ -36,6 +36,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "..\dist\N-Lite.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\N-Lite-Cleaner.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\N-Lite"; Filename: "{app}\N-Lite.exe"; WorkingDir: "{app}"
@@ -48,5 +49,21 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\N-Lite.exe"; Description: "Launch N-Lite"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\N-Lite.exe"; Parameters: "--updated"; WorkingDir: "{app}"; Flags: nowait skipifnotsilent
 
-[UninstallRun]
-Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /F /TN ""N-Lite Auto Clean"""; Flags: runhidden; RunOnceId: "DeleteN-LiteAutoCleanTask"
+[Code]
+function InitializeUninstall(): Boolean;
+var
+  Sid: string;
+  ExitCode: Integer;
+begin
+  Result := True;
+  if RegQueryStringValue(HKCU, 'Software\N-Lite', 'CleanerSid', Sid) and
+     FileExists(ExpandConstant('{app}\N-Lite-Cleaner.exe')) then begin
+    if not ShellExec('runas', ExpandConstant('{app}\N-Lite-Cleaner.exe'),
+       '--uninstall ' + Sid, ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ExitCode) or
+       (ExitCode <> 0) then begin
+      MsgBox('Windows did not remove the protected standby cleaner task. N-Lite setup will stay installed.',
+        mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+end;

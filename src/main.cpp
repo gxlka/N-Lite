@@ -9,6 +9,7 @@
 #include <mmsystem.h>
 #include <dwmapi.h>
 #include <shlwapi.h>
+#include <sddl.h>
 #include <winhttp.h>
 #include <wincrypt.h>
 #include <thread>
@@ -28,6 +29,10 @@
 #include <iterator>
 #include <utility>
 #include <memory>
+#include "cleaner_policy.h"
+#include "process_grouping.h"
+#include "ui_layout.h"
+#include "ui_theme.h"
 
 #pragma comment(lib, "psapi.lib")
 #pragma comment(lib, "shell32.lib")
@@ -40,9 +45,13 @@
 #ifndef NLITE_VERSION
 #define NLITE_VERSION "0.1.0"
 #endif
+#ifndef NLITE_CLEANER_VERSION
+#define NLITE_CLEANER_VERSION "1"
+#endif
 #define NLITE_WIDEN2(x) L##x
 #define NLITE_WIDEN(x) NLITE_WIDEN2(x)
 static const wchar_t* APP_VERSION = NLITE_WIDEN(NLITE_VERSION);
+static const wchar_t* CLEANER_VERSION = NLITE_WIDEN(NLITE_CLEANER_VERSION);
 static const wchar_t* APP_CLASS = L"NLiteWindow";
 static const wchar_t* POPUP_CLASS = L"NLiteContextPopup";
 static const UINT WM_UPDATE_READY = WM_APP + 12;
@@ -52,14 +61,17 @@ static const UINT_PTR TIMER_REFRESH = 1, TIMER_UPDATE_CHECK = 2;
 static const int ID_PROCESSES = 1, ID_MEMORY = 2, ID_STARTUP = 3, ID_SETTINGS = 4, ID_REFRESH = 10, ID_SEARCH = 11;
 static const int ID_SORT_NAME = 20, ID_SORT_PID = 21, ID_SORT_CPU = 22, ID_SORT_MEMORY = 23, ID_SORT_PRIVATE = 24;
 static const int ID_PURGE = 30, ID_AUTO = 31, ID_THRESHOLD_DOWN = 32, ID_THRESHOLD_UP = 33, ID_THRESHOLD_FIELD = 37;
-static const int ID_INTERVAL_FIELD = 34, ID_ELEVATE = 36, ID_INTERVAL_OPTION = 38;
+static const int ID_INTERVAL_FIELD = 34, ID_ELEVATE = 36, ID_INTERVAL_OPTION = 38, ID_THEME = 46;
 static const int ID_TIMER_TOGGLE = 40, ID_TIMER_MINUS = 41, ID_TIMER_PLUS = 42, ID_AUTOSTART = 43, ID_UPDATE_CHECK_NOW = 44, ID_OPEN_GITHUB = 45;
 static const int ID_END = 50, ID_AFFINITY = 51, ID_PRIORITY = 52, ID_GPU_HIGH = 53, ID_GPU_SAVE = 54;
 static const int ID_EXIT = 9001, ID_SHOW = 9002, ID_UPDATE = 9003;
-static const COLORREF C_BG = RGB(13, 17, 27), C_PANEL = RGB(21, 27, 40), C_PANEL2 = RGB(26, 33, 49);
-static const COLORREF C_LINE = RGB(42, 51, 69), C_TEXT = RGB(232, 237, 247), C_MUTED = RGB(144, 156, 177);
-static const COLORREF C_ACCENT = RGB(126, 132, 255), C_GREEN = RGB(91, 214, 164), C_AMBER = RGB(246, 186, 89);
-static const COLORREF C_RED = RGB(245, 105, 119);
+static COLORREF C_BG = RGB(17, 21, 29), C_PANEL = RGB(26, 32, 42), C_PANEL2 = RGB(21, 26, 35);
+static COLORREF C_LINE = RGB(43, 52, 66), C_TEXT = RGB(233, 237, 245), C_MUTED = RGB(151, 162, 178);
+static COLORREF C_ACCENT = RGB(130, 144, 255), C_ACCENT_SOFT = RGB(37, 43, 73);
+static COLORREF C_GREEN = RGB(114, 200, 164), C_GREEN_SOFT = RGB(27, 53, 45);
+static COLORREF C_AMBER = RGB(228, 182, 108), C_AMBER_SOFT = RGB(53, 43, 29);
+static COLORREF C_RED = RGB(239, 135, 144), C_NAV_HOVER = RGB(31, 38, 52), C_SELECTED = RGB(38, 47, 73);
+static COLORREF C_FIELD = RGB(16, 20, 29), C_ROW = RGB(23, 29, 42), C_TRACK = RGB(57, 64, 81);
 
 struct MemListInfo {
     SIZE_T zero, free, modified, modifiedNoWrite, bad;
@@ -73,6 +85,8 @@ struct ProcRow {
     double cpu = 0.0;
     SIZE_T working = 0, privateBytes = 0, treeWorking = 0, treePrivateBytes = 0;
     bool hasChildren = false;
+    bool groupHeader = false;
+    std::wstring groupKey;
 };
 struct Metrics {
     double total = 0, available = 0, free = 0, standby = 0;
@@ -89,7 +103,7 @@ static HFONT gFont = nullptr, gFontSmall = nullptr, gFontMed = nullptr, gFontBol
 static std::vector<Hit> gHits;
 static std::vector<ProcRow> gProcs, gVisible;
 static std::unordered_map<DWORD, uint64_t> gCpuPrevious;
-static std::unordered_map<DWORD, bool> gExpanded;
+static std::unordered_map<std::wstring, bool> gExpanded;
 static Metrics gMetrics;
 static int gPage = 0, gScroll = 0, gNavHover = -1, gIntervalHover = -1;
 static bool gIntervalOpen = false;
@@ -99,7 +113,11 @@ static DWORD gSelectedPid = 0;
 static std::wstring gSearch, gStatus = L"Ready";
 static bool gSearchFocus = false, gTrayAdded = false, gExiting = false, gAutoPurge = false, gAutoStart = false;
 static bool gThresholdFocus=false, gThresholdReplaceOnType=false, gTimerEnabled=false, gTimerActive=false, gAutoTaskReady=false, gHasProcessOverrides=false;
+static bool gDarkTheme=true, gCleanerInstalled=false, gCleanerCurrentVersion=false;
+static bool gCleanerSetupForAuto=false, gCleanerSetupForManual=false;
+static bool gCleanerSetupBlocked=false;
 static std::wstring gThresholdEdit;
+static std::wstring gUserSid, gCleanerRoot;
 static DWORD gHoveredPid=0;
 static std::unordered_map<std::wstring,HICON> gProcessIcons;
 static std::atomic<bool> gUpdateAvailable{false};
@@ -110,7 +128,11 @@ static std::wstring gLatestVersion, gInstallerUrl, gInstallerDigest, gUpdateInst
 static std::atomic<bool> gUpdateInstallerMissing{false};
 static std::atomic<bool> gUpdateInstallInProgress{false};
 static bool gTimerNeed = false;
-static HANDLE gElevatedPurgeProcess = nullptr;
+static HANDLE gCleanerSetupProcess = nullptr;
+static uint64_t gCleanerRequestId = 0;
+static uint64_t gLastDisplayedManualRequestId = 0;
+static CleanerStatus gCleanerStatus;
+static bool gManualCleanerPending = false;
 static unsigned gThresholdMB = 4096, gIntervalSec = 60;
 static ULONG gTimerResolution=5000, gTimerApplied=5000, gTimerMinResolution=5000, gTimerMaxResolution=156250;
 static DWORD gLastRefresh = 0;
@@ -120,6 +142,24 @@ static std::wstring gExePath;
 static DWORD gPageSize = 4096;
 static HANDLE gMutex = nullptr;
 
+static void ApplyThemeColors() {
+    const UiPalette p = PaletteFor(gDarkTheme);
+    C_BG = p.background; C_PANEL = p.surface; C_PANEL2 = p.softSurface; C_LINE = p.border;
+    C_TEXT = p.text; C_MUTED = p.muted; C_ACCENT = p.accent; C_ACCENT_SOFT = p.accentSoft;
+    C_GREEN = p.green; C_GREEN_SOFT = p.greenSoft; C_AMBER = p.amber; C_AMBER_SOFT = p.amberSoft;
+    C_RED = p.red; C_NAV_HOVER = p.navHover; C_SELECTED = p.selected; C_FIELD = p.field;
+    C_ROW = p.row; C_TRACK = p.track;
+}
+static void ApplyWindowChromeTheme(HWND hwnd) {
+    BOOL dark = gDarkTheme ? TRUE : FALSE;
+    DwmSetWindowAttribute(hwnd, 19, &dark, sizeof(dark));
+    DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark));
+    COLORREF caption = C_BG, titleText = C_TEXT, border = C_BG;
+    DwmSetWindowAttribute(hwnd, 35, &caption, sizeof(caption));
+    DwmSetWindowAttribute(hwnd, 36, &titleText, sizeof(titleText));
+    DwmSetWindowAttribute(hwnd, 34, &border, sizeof(border));
+}
+
 static bool ReadProcessDword(const wchar_t* kind, const std::wstring& path, DWORD& value);
 static bool ReadProcessQword(const wchar_t* kind, const std::wstring& path, uint64_t& value);
 static bool WriteProcessDword(const wchar_t* kind, const std::wstring& path, DWORD value);
@@ -128,11 +168,9 @@ static void ApplyStoredProcessSettings(const ProcRow& p);
 static bool ProcessOverridesExist();
 
 using NtQuerySysFn = LONG (NTAPI*)(ULONG, PVOID, ULONG, PULONG);
-using NtSetSysFn = LONG (NTAPI*)(ULONG, PVOID, ULONG);
 using NtQueryTimerFn = LONG (NTAPI*)(PULONG, PULONG, PULONG);
 using NtSetTimerFn = LONG (NTAPI*)(ULONG, BOOLEAN, PULONG);
 static NtQuerySysFn gNtQuerySys = nullptr;
-static NtSetSysFn gNtSetSys = nullptr;
 static NtQueryTimerFn gNtQueryTimer = nullptr;
 static NtSetTimerFn gNtSetTimer = nullptr;
 
@@ -183,7 +221,6 @@ static void LoadNt() {
     HMODULE n = GetModuleHandleW(L"ntdll.dll");
     if (!n) return;
     gNtQuerySys = reinterpret_cast<NtQuerySysFn>(GetProcAddress(n, "NtQuerySystemInformation"));
-    gNtSetSys = reinterpret_cast<NtSetSysFn>(GetProcAddress(n, "NtSetSystemInformation"));
     gNtQueryTimer = reinterpret_cast<NtQueryTimerFn>(GetProcAddress(n, "NtQueryTimerResolution"));
     gNtSetTimer = reinterpret_cast<NtSetTimerFn>(GetProcAddress(n, "NtSetTimerResolution"));
 }
@@ -194,45 +231,6 @@ static bool ReadStandby(double& out, double& freeOut) {
     if (st < 0) return false;
     SIZE_T pages = 0; for (auto v : info.standby) pages += v;
     out = static_cast<double>(pages) * gPageSize; freeOut = static_cast<double>(info.free) * gPageSize; return true;
-}
-static LONG PurgeStandby() {
-    // SystemMemoryListInformation requires SeProfileSingleProcessPrivilege.
-    // Merely running elevated does not guarantee that this privilege is enabled.
-    if (!gNtSetSys) return static_cast<LONG>(0xC0000002L);
-    HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES, &token))
-        return static_cast<LONG>(0xC0000022L);
-
-    LUID luid{};
-    if (!LookupPrivilegeValueW(nullptr, L"SeProfileSingleProcessPrivilege", &luid)) {
-        CloseHandle(token);
-        return static_cast<LONG>(0xC0000061L);
-    }
-
-    TOKEN_PRIVILEGES requested{};
-    requested.PrivilegeCount = 1;
-    requested.Privileges[0].Luid = luid;
-    requested.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-    TOKEN_PRIVILEGES previous{};
-    DWORD previousSize = 0;
-    SetLastError(ERROR_SUCCESS);
-    if (!AdjustTokenPrivileges(token, FALSE, &requested, sizeof(previous), &previous, &previousSize)) {
-        CloseHandle(token);
-        return static_cast<LONG>(0xC0000022L);
-    }
-    if (GetLastError() == ERROR_NOT_ALL_ASSIGNED) {
-        CloseHandle(token);
-        return static_cast<LONG>(0xC0000061L);
-    }
-
-    ULONG cmd = 4; // MemoryPurgeStandbyList
-    LONG status = gNtSetSys(80, &cmd, sizeof(cmd));
-    if (previous.PrivilegeCount) {
-        SetLastError(ERROR_SUCCESS);
-        AdjustTokenPrivileges(token, FALSE, &previous, 0, nullptr, nullptr);
-    }
-    CloseHandle(token);
-    return status;
 }
 static bool IsNtOk(LONG s) { return s >= 0; }
 static BOOL CALLBACK PageFileUsageCallback(PVOID context, PENUM_PAGE_FILE_INFORMATION info, LPCWSTR) {
@@ -270,6 +268,13 @@ static std::wstring ImagePath(HANDLE h) {
 static void RefreshProcesses() {
     DWORD nowMs = GetTickCount();
     DWORD elapsed = gLastRefresh ? nowMs - gLastRefresh : 0;
+    DWORD anchorPid = 0;
+    std::wstring anchorGroup;
+    const int previousScroll = gScroll;
+    if (gScroll >= 0 && gScroll < static_cast<int>(gVisible.size())) {
+        anchorPid = gVisible[gScroll].pid;
+        anchorGroup = gVisible[gScroll].groupKey;
+    }
     SYSTEM_INFO si{}; GetSystemInfo(&si); unsigned cpus = si.dwNumberOfProcessors ? si.dwNumberOfProcessors : 1;
     std::vector<ProcRow> fresh;
     std::unordered_map<DWORD,double> previousCpu;
@@ -302,7 +307,6 @@ static void RefreshProcesses() {
                 }
                 CloseHandle(ph);
             }
-            if (gExpanded.find(p.pid) == gExpanded.end()) gExpanded[p.pid] = false;
             if(!p.path.empty())ApplyStoredProcessSettings(p);
             fresh.push_back(std::move(p));
         } while (Process32NextW(snap, &e));
@@ -312,71 +316,75 @@ static void RefreshProcesses() {
     gProcs.swap(fresh);
 
     std::unordered_set<DWORD> ids; for (auto& p : gProcs) ids.insert(p.pid);
-    for(auto it=gExpanded.begin();it!=gExpanded.end();)if(!ids.count(it->first))it=gExpanded.erase(it);else ++it;
     for(auto it=gCpuPrevious.begin();it!=gCpuPrevious.end();)if(!ids.count(it->first))it=gCpuPrevious.erase(it);else ++it;
-    std::unordered_map<DWORD, std::vector<DWORD>> children;
-    std::unordered_map<DWORD, size_t> index;
-    std::unordered_set<DWORD> groupedChildren;
-    for (size_t i = 0; i < gProcs.size(); ++i) index[gProcs[i].pid] = i;
-    for (auto& p : gProcs) {
-        auto parent = index.find(p.ppid);
-        if (p.ppid == p.pid || parent == index.end() || p.path.empty() || p.path == L"Path unavailable")
-            continue;
-        ProcRow& parentRow = gProcs[parent->second];
-        if (parentRow.path.empty() || parentRow.path == L"Path unavailable" ||
-            _wcsicmp(p.path.c_str(), parentRow.path.c_str()) != 0)
-            continue;
-        children[p.ppid].push_back(p.pid);
-        groupedChildren.insert(p.pid);
-        parentRow.hasChildren = true;
-    }
-    std::unordered_map<DWORD,std::pair<SIZE_T,SIZE_T>> totals;
-    std::unordered_set<DWORD> calculating;
-    std::function<std::pair<SIZE_T,SIZE_T>(DWORD)> totalFor = [&](DWORD id) -> std::pair<SIZE_T,SIZE_T> {
-        auto memo=totals.find(id);if(memo!=totals.end())return memo->second;
-        auto ix=index.find(id);if(ix==index.end())return {0,0};
-        ProcRow& row=gProcs[ix->second];
-        if(calculating.count(id))return {0,0};
-        calculating.insert(id);
-        SIZE_T working=row.working,privateBytes=row.privateBytes;
-        auto kid=children.find(id);
-        if(kid!=children.end())for(DWORD child:kid->second){auto part=totalFor(child);working+=part.first;privateBytes+=part.second;}
-        calculating.erase(id);
-        return totals[id]={working,privateBytes};
-    };
-    for(auto& p:gProcs){auto total=totalFor(p.pid);p.treeWorking=total.first;p.treePrivateBytes=total.second;}
     auto compareRows = [&](const ProcRow& a,const ProcRow& b) {
         int cmp=0;
         if(gSortColumn==0)cmp=_wcsicmp(a.name.c_str(),b.name.c_str());
         else if(gSortColumn==1)cmp=a.pid<b.pid?-1:(a.pid>b.pid?1:0);
         else if(gSortColumn==2)cmp=a.cpu<b.cpu?-1:(a.cpu>b.cpu?1:0);
-        else if(gSortColumn==3){SIZE_T av=a.hasChildren?a.treeWorking:a.working,bv=b.hasChildren?b.treeWorking:b.working;cmp=av<bv?-1:(av>bv?1:0);}
-        else {SIZE_T av=a.hasChildren?a.treePrivateBytes:a.privateBytes,bv=b.hasChildren?b.treePrivateBytes:b.privateBytes;cmp=av<bv?-1:(av>bv?1:0);}
+        else if(gSortColumn==3){SIZE_T av=a.groupHeader?a.treeWorking:a.working,bv=b.groupHeader?b.treeWorking:b.working;cmp=av<bv?-1:(av>bv?1:0);}
+        else {SIZE_T av=a.groupHeader?a.treePrivateBytes:a.privateBytes,bv=b.groupHeader?b.treePrivateBytes:b.privateBytes;cmp=av<bv?-1:(av>bv?1:0);}
         if(cmp==0)cmp=_wcsicmp(a.name.c_str(),b.name.c_str());
         return gSortDescending?cmp>0:cmp<0;
     };
-    auto sortKids = [&](std::vector<DWORD>& v) {
-        std::sort(v.begin(), v.end(), [&](DWORD a, DWORD b) {
-            return compareRows(gProcs[index[a]],gProcs[index[b]]);
-        });
-    };
-    for (auto& kv : children) sortKids(kv.second);
-    std::vector<ProcRow> flat; std::unordered_set<DWORD> seen;
-    std::function<void(DWORD,int)> walk = [&](DWORD id, int depth) {
-        if (seen.count(id) || !index.count(id)) return;
-        seen.insert(id); ProcRow p = gProcs[index[id]]; p.ppid = depth; flat.push_back(p);
-        if (gExpanded[id] && children.count(id)) for (DWORD child : children[id]) walk(child, depth + 1);
-    };
-    std::vector<DWORD> roots;
-    for (auto& p : gProcs) if (!groupedChildren.count(p.pid)) roots.push_back(p.pid);
-    sortKids(roots);
-    for (DWORD id : roots) walk(id, 0);
-    for (auto& p : gProcs) if (!seen.count(p.pid)) walk(p.pid, 0);
+    std::vector<ProcessSample> samples;
+    samples.reserve(gProcs.size());
+    for (const auto& p : gProcs) samples.push_back({p.pid, p.path,
+        static_cast<uint64_t>(p.working), static_cast<uint64_t>(p.privateBytes), p.cpu});
+    std::vector<ProcessGroup> groups = GroupProcessSamples(samples);
+    std::sort(groups.begin(), groups.end(), [&](const ProcessGroup& a, const ProcessGroup& b) {
+        ProcRow left = gProcs[a.representativeIndex], right = gProcs[b.representativeIndex];
+        left.name = a.path.empty() || a.path == L"Path unavailable" ? left.name : PathFindFileNameW(a.path.c_str());
+        right.name = b.path.empty() || b.path == L"Path unavailable" ? right.name : PathFindFileNameW(b.path.c_str());
+        left.groupHeader = a.members.size() > 1; right.groupHeader = b.members.size() > 1;
+        left.treeWorking = static_cast<SIZE_T>(a.workingBytes); right.treeWorking = static_cast<SIZE_T>(b.workingBytes);
+        left.treePrivateBytes = static_cast<SIZE_T>(a.privateBytes); right.treePrivateBytes = static_cast<SIZE_T>(b.privateBytes);
+        if (a.members.size() > 1) left.cpu = a.cpuPercent;
+        if (b.members.size() > 1) right.cpu = b.cpuPercent;
+        return compareRows(left, right);
+    });
+    std::unordered_set<std::wstring> liveGroups;
+    std::vector<ProcRow> flat;
+    for (const auto& group : groups) {
+        liveGroups.insert(group.key);
+        const bool grouped = group.members.size() > 1;
+        ProcRow summary = gProcs[group.representativeIndex];
+        if (!group.path.empty() && group.path != L"Path unavailable") summary.name = PathFindFileNameW(group.path.c_str());
+        summary.groupKey = group.key;
+        summary.groupHeader = grouped;
+        summary.hasChildren = grouped;
+        summary.ppid = 0;
+        summary.treeWorking = static_cast<SIZE_T>(group.workingBytes);
+        summary.treePrivateBytes = static_cast<SIZE_T>(group.privateBytes);
+        if (grouped) summary.cpu = group.cpuPercent;
+        flat.push_back(summary);
+        if (!grouped || !gExpanded[group.key]) continue;
+        std::vector<size_t> members = group.members;
+        std::sort(members.begin(), members.end(), [&](size_t a, size_t b) { return compareRows(gProcs[a], gProcs[b]); });
+        for (size_t member : members) {
+            ProcRow child = gProcs[member];
+            child.groupKey = group.key;
+            child.groupHeader = false;
+            child.hasChildren = false;
+            child.ppid = 1;
+            child.treeWorking = child.working;
+            child.treePrivateBytes = child.privateBytes;
+            flat.push_back(std::move(child));
+        }
+    }
+    for (auto it = gExpanded.begin(); it != gExpanded.end();) {
+        if (!liveGroups.count(it->first)) it = gExpanded.erase(it); else ++it;
+    }
     gVisible.clear();
     for (auto& p : flat) if (gSearch.empty() || StrStrIW(p.name.c_str(), gSearch.c_str()) || StrStrIW(p.path.c_str(), gSearch.c_str()))
         gVisible.push_back(p);
-    int maxRows = (std::max)(1, (GetSystemMetrics(SM_CYSCREEN) - 300) / 44);
-    (void)maxRows;
+    auto anchor = std::find_if(gVisible.begin(), gVisible.end(), [&](const ProcRow& p) {
+        return anchorPid && p.pid == anchorPid && p.groupKey == anchorGroup;
+    });
+    if (anchor == gVisible.end() && !anchorGroup.empty()) anchor = std::find_if(gVisible.begin(), gVisible.end(), [&](const ProcRow& p) {
+        return p.groupHeader && p.groupKey == anchorGroup;
+    });
+    gScroll = anchor != gVisible.end() ? static_cast<int>(anchor - gVisible.begin()) : previousScroll;
     gScroll = (std::max)(0, (std::min)(gScroll, static_cast<int>(gVisible.size())));
     if (!gSelectedPid || std::none_of(gProcs.begin(), gProcs.end(), [](const ProcRow& p){ return p.pid == gSelectedPid; })) {
         gSelectedPid = gVisible.empty() ? 0 : gVisible.front().pid;
@@ -405,9 +413,118 @@ static void RegWriteQword(const wchar_t* name,uint64_t value) {
         RegSetValueExW(k,name,0,REG_QWORD,reinterpret_cast<const BYTE*>(&value),sizeof(value));RegCloseKey(k);
     }
 }
+static void RegWriteString(const wchar_t* name, const std::wstring& value) {
+    HKEY key;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\N-Lite", 0, nullptr, 0,
+        KEY_SET_VALUE, nullptr, &key, nullptr) == ERROR_SUCCESS) {
+        RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
+            static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(key);
+    }
+}
+static std::wstring ProgramDataNlite() {
+    DWORD size = GetEnvironmentVariableW(L"ProgramData", nullptr, 0);
+    if (!size || size > 32767) return L"";
+    std::vector<wchar_t> value(size);
+    DWORD copied = GetEnvironmentVariableW(L"ProgramData", value.data(), size);
+    if (!copied || copied >= size) return L"";
+    return std::wstring(value.data()) + L"\\N-Lite";
+}
+static std::wstring CleanerSettingsFile() {
+    return gCleanerRoot.empty() || gUserSid.empty() ? L"" : gCleanerRoot + L"\\settings-" + gUserSid + L".txt";
+}
+static std::wstring CleanerStatusFile() {
+    return gCleanerRoot.empty() || gUserSid.empty() ? L"" : gCleanerRoot + L"\\status-" + gUserSid + L".txt";
+}
+static bool ReadCleanerText(const std::wstring& path, std::wstring& text) {
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    BY_HANDLE_FILE_INFORMATION info{};
+    LARGE_INTEGER size{};
+    bool ok = GetFileInformationByHandle(file, &info) && !(info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+        GetFileSizeEx(file, &size) && size.QuadPart >= 0 && size.QuadPart <= 32768 &&
+        size.QuadPart % sizeof(wchar_t) == 0;
+    std::vector<wchar_t> buffer(ok ? static_cast<size_t>(size.QuadPart / sizeof(wchar_t)) + 1 : 1, L'\0');
+    DWORD read = 0;
+    if (ok && size.QuadPart) ok = ReadFile(file, buffer.data(), static_cast<DWORD>(size.QuadPart), &read, nullptr) &&
+        read == static_cast<DWORD>(size.QuadPart);
+    if (ok) text.assign(buffer.data(), read / sizeof(wchar_t));
+    CloseHandle(file);
+    return ok;
+}
+static bool WriteCleanerText(const std::wstring& path, const std::wstring& text) {
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    BY_HANDLE_FILE_INFORMATION info{};
+    bool ok = GetFileInformationByHandle(file, &info) && !(info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT);
+    LARGE_INTEGER zero{};
+    if (ok) ok = SetFilePointerEx(file, zero, nullptr, FILE_BEGIN) && SetEndOfFile(file);
+    const DWORD bytes = static_cast<DWORD>(text.size() * sizeof(wchar_t));
+    DWORD written = 0;
+    if (ok) ok = WriteFile(file, text.data(), bytes, &written, nullptr) && written == bytes && FlushFileBuffers(file);
+    CloseHandle(file);
+    return ok;
+}
+static std::wstring CurrentUserSid() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return L"";
+    DWORD bytes = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &bytes);
+    std::vector<BYTE> buffer(bytes);
+    std::wstring result;
+    if (bytes && GetTokenInformation(token, TokenUser, buffer.data(), bytes, &bytes)) {
+        LPWSTR sidText = nullptr;
+        auto user = reinterpret_cast<TOKEN_USER*>(buffer.data());
+        if (ConvertSidToStringSidW(user->User.Sid, &sidText)) {
+            result = sidText;
+            LocalFree(sidText);
+        }
+    }
+    CloseHandle(token);
+    return IsValidCleanerSid(result) ? result : L"";
+}
+static bool RunSchtasks(const std::vector<std::wstring>& arguments);
+static bool WriteCleanerSettings() {
+    if (!gCleanerInstalled) return true;
+    CleanerSettings settings;
+    settings.enabled = gAutoPurge;
+    settings.thresholdMb = gThresholdMB;
+    settings.intervalSeconds = gIntervalSec;
+    settings.manualRequestId = gCleanerRequestId;
+    if (!WriteCleanerText(CleanerSettingsFile(), SerializeCleanerSettings(settings))) {
+        gStatus = L"Could not save settings for the standby cleaner.";
+        return false;
+    }
+    return true;
+}
+static bool ReadCleanerStatus(CleanerStatus& status) {
+    std::wstring text;
+    return ReadCleanerText(CleanerStatusFile(), text) && ParseCleanerStatus(text, status);
+}
+static bool CleanerRegistrationValid() {
+    if (gCleanerRoot.empty() || gUserSid.empty()) return false;
+    DWORD helper = GetFileAttributesW((gCleanerRoot + L"\\N-Lite-Cleaner.exe").c_str());
+    std::wstring configText, statusText;
+    CleanerSettings settings; CleanerStatus status;
+    return helper != INVALID_FILE_ATTRIBUTES && !(helper & (FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY)) &&
+        ReadCleanerText(CleanerSettingsFile(), configText) && ParseCleanerSettings(configText, settings) &&
+        ReadCleanerText(CleanerStatusFile(), statusText) && ParseCleanerStatus(statusText, status) &&
+        RunSchtasks({L"/Query", L"/TN", L"N-Lite Cleaner " + gUserSid});
+}
+static bool CleanerHelperCurrent() {
+    std::wstring version;
+    if (gCleanerRoot.empty() || !ReadCleanerText(gCleanerRoot + L"\\helper-version.txt", version)) return false;
+    while (!version.empty() && (version.back() == L'\r' || version.back() == L'\n' || version.back() == L' ')) version.pop_back();
+    return version == CLEANER_VERSION;
+}
 static void SaveSettings() {
     RegWriteDword(L"AutoPurge",gAutoPurge?1:0); RegWriteDword(L"ThresholdMB",gThresholdMB); RegWriteDword(L"IntervalSec",gIntervalSec);
     RegWriteDword(L"TimerEnabled",gTimerEnabled?1:0); RegWriteDword(L"TimerResolution100ns",gTimerResolution);
+    RegWriteDword(L"ThemeDark",gDarkTheme?1:0);
+    if (!gUserSid.empty()) RegWriteString(L"CleanerSid", gUserSid);
+    WriteCleanerSettings();
 }
 static void LoadSettings() {
     DWORD v=0; RegReadDword(L"AutoPurge",v); gAutoPurge=v!=0;
@@ -416,6 +533,26 @@ static void LoadSettings() {
     v=0; RegReadDword(L"TimerEnabled",v); gTimerEnabled=v!=0;
     v=5000; RegReadDword(L"TimerResolution100ns",v); gTimerResolution=v;
     v=0; RegReadDword(L"AutoTaskReady",v); gAutoTaskReady=v!=0;
+    v=1; RegReadDword(L"ThemeDark",v); gDarkTheme=v!=0; ApplyThemeColors();
+    gCleanerInstalled = CleanerRegistrationValid();
+    gCleanerCurrentVersion = gCleanerInstalled && CleanerHelperCurrent();
+    gAutoTaskReady = gCleanerInstalled;
+    if (gCleanerInstalled) {
+        std::wstring text; CleanerSettings settings;
+        if (ReadCleanerText(CleanerSettingsFile(), text) && ParseCleanerSettings(text, settings)) {
+            gCleanerRequestId = settings.manualRequestId;
+        }
+        CleanerStatus status;
+        if (ReadCleanerStatus(status)) {
+            gCleanerRequestId=(std::max)(gCleanerRequestId,status.completedManualRequestId);
+            gCleanerStatus = status;
+            gLastSeenPurgeTick = status.lastAutoTick;
+            gLastDisplayedManualRequestId = status.completedManualRequestId;
+            gManualCleanerPending = gCleanerRequestId > status.completedManualRequestId;
+        }
+        WriteCleanerSettings();
+    }
+    RegWriteString(L"CleanerSid", gUserSid);
 }
 static void LoadTimerRange() {
     ULONG maxRes=0,minRes=0,cur=0;
@@ -537,49 +674,10 @@ static bool RunSchtasks(const std::vector<std::wstring>& arguments) {
     else TerminateProcess(pi.hProcess,1);
     CloseHandle(pi.hThread);CloseHandle(pi.hProcess);return wait==WAIT_OBJECT_0&&code==0;
 }
-static bool InstallAutoCleanTask() {
-    std::wstring action=L"\""+gExePath+L"\" --auto-clean-check";
-    std::vector<std::wstring> args={L"/Create",L"/F",L"/SC",L"MINUTE",L"/MO",L"1",L"/TN",L"N-Lite Auto Clean",L"/TR",action,L"/RL",L"HIGHEST",L"/IT"};
-    bool ok=RunSchtasks(args);
-    RegWriteDword(L"AutoTaskReady",ok?1:0);
-    RegWriteDword(L"AutoTaskSetupResult",ok?0:1);
-    if(!ok){RegWriteDword(L"AutoPurge",0);RegWriteDword(L"PurgeArmed",0);}
-    return ok;
-}
-static void RunAutoCleanCheck() {
-    LoadSettings();
-    if(!gAutoPurge){RunSchtasks({L"/Change",L"/TN",L"N-Lite Auto Clean",L"/DISABLE"});return;}
-    SYSTEM_INFO si{};GetSystemInfo(&si);gPageSize=si.dwPageSize?si.dwPageSize:4096;
-    double standby=0,freePages=0;
-    if(!ReadStandby(standby,freePages))return;
-    uint64_t now=GetTickCount64(),last=RegReadQword(L"LastAutoPurgeTick",0);
-    DWORD armed=1;RegReadDword(L"PurgeArmed",armed);
-    if(standby<gThresholdMB*1024.0*1024.0){RegWriteDword(L"PurgeArmed",1);return;}
-    if(armed && (!last || now<last || now-last>=static_cast<uint64_t>(gIntervalSec)*1000)){
-        LONG status=PurgeStandby();RegWriteDword(L"LastAutoPurgeStatus",static_cast<DWORD>(status));
-        RegWriteQword(L"LastAutoPurgeTick",now);
-        if(IsNtOk(status))RegWriteDword(L"PurgeArmed",0);
-    }
-}
-static void RequestAutoTaskInstall() {
-    RegWriteDword(L"AutoTaskReady",0);RegWriteDword(L"PurgeArmed",1);
-    HINSTANCE result=ShellExecuteW(gWnd,L"runas",gExePath.c_str(),L"--install-auto-task",nullptr,SW_HIDE);
-    if(reinterpret_cast<INT_PTR>(result)>32)gStatus=L"Approve the one-time Windows prompt to enable automatic cleaning.";
-    else {
-        gAutoPurge=false;SaveSettings();gStatus=L"Automatic cleaning was not enabled because admin access was cancelled.";
-    }
-}
-static bool IsAdmin() {
-    BOOL yes = FALSE; PSID sid = nullptr; SID_IDENTIFIER_AUTHORITY nt = SECURITY_NT_AUTHORITY;
-    if (AllocateAndInitializeSid(&nt, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS, 0,0,0,0,0,0, &sid)) {
-        CheckTokenMembership(nullptr, sid, &yes); FreeSid(sid);
-    }
-    return yes != FALSE;
-}
 static HICON MakeIcon() {
     HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen);
     HBITMAP color = CreateCompatibleBitmap(screen, 32, 32), mask = CreateBitmap(32, 32, 1, 1, nullptr);
-    HGDIOBJ old = SelectObject(dc, color); RECT r = R(0,0,32,32); Fill(dc, r, RGB(18,22,35));
+    HGDIOBJ old = SelectObject(dc, color); RECT r = R(0,0,32,32); Fill(dc, r, C_BG);
     HPEN p = CreatePen(PS_SOLID, 4, C_ACCENT); HGDIOBJ op = SelectObject(dc, p);
     MoveToEx(dc, 8, 24, nullptr); LineTo(dc, 8, 8); LineTo(dc, 23, 24); LineTo(dc, 23, 8);
     SelectObject(dc, op); DeleteObject(p); SelectObject(dc, old);
@@ -602,52 +700,143 @@ static void ShowWindowFromTray() {
     ShowWindow(gWnd, SW_SHOW); ShowWindow(gWnd, SW_RESTORE); SetForegroundWindow(gWnd);
 }
 static void HideToTray() { AddTray(); ShowWindow(gWnd, SW_HIDE); }
-static bool RequestElevatedPurge() {
-    if (gElevatedPurgeProcess) {
-        if (WaitForSingleObject(gElevatedPurgeProcess, 0) == WAIT_TIMEOUT) {
-            gStatus = L"An elevated standby purge is already running.";
-            return false;
-        }
-        CloseHandle(gElevatedPurgeProcess);
-        gElevatedPurgeProcess = nullptr;
+static std::wstring PackagedCleanerPath() {
+    size_t slash = gExePath.find_last_of(L"\\/");
+    return (slash == std::wstring::npos ? L"" : gExePath.substr(0, slash + 1)) + L"N-Lite-Cleaner.exe";
+}
+static bool StartCleanerSetup(bool forAuto, bool forManual) {
+    if (gCleanerSetupBlocked && gCleanerInstalled) {
+        gStatus = L"The existing cleaner is still available; helper setup can be retried after restarting N-Lite.";
+        return false;
     }
+    gCleanerSetupForAuto = gCleanerSetupForAuto || forAuto;
+    gCleanerSetupForManual = gCleanerSetupForManual || forManual;
+    if (gCleanerSetupProcess && WaitForSingleObject(gCleanerSetupProcess, 0) == WAIT_TIMEOUT) {
+        gStatus = L"Finishing the one-time standby cleaner setup.";
+        return true;
+    }
+    if (gCleanerSetupProcess) { CloseHandle(gCleanerSetupProcess); gCleanerSetupProcess = nullptr; }
+    if (gUserSid.empty()) {
+        gCleanerSetupBlocked=true;
+        const bool disableAuto=gCleanerSetupForAuto;gCleanerSetupForAuto=false;gCleanerSetupForManual=false;
+        if(disableAuto&&!gCleanerInstalled){gAutoPurge=false;SaveSettings();}
+        gStatus = L"Could not identify this Windows account for cleaner setup."; return false;
+    }
+    const std::wstring helper = PackagedCleanerPath();
+    DWORD attributes = GetFileAttributesW(helper.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        gCleanerSetupBlocked=true;
+        const bool disableAuto=gCleanerSetupForAuto;gCleanerSetupForAuto=false;gCleanerSetupForManual=false;
+        if(disableAuto&&!gCleanerInstalled){gAutoPurge=false;SaveSettings();}
+        gStatus = L"N-Lite-Cleaner.exe is missing. Reinstall N-Lite to restore the cleaner.";
+        return false;
+    }
+    std::wstring parameters = L"--install " + gUserSid;
     SHELLEXECUTEINFOW execute{};
     execute.cbSize = sizeof(execute);
     execute.fMask = SEE_MASK_NOCLOSEPROCESS;
     execute.hwnd = gWnd;
     execute.lpVerb = L"runas";
-    execute.lpFile = gExePath.c_str();
-    execute.lpParameters = L"--purge-once";
+    execute.lpFile = helper.c_str();
+    execute.lpParameters = parameters.c_str();
     execute.nShow = SW_HIDE;
+    RegWriteDword(L"AutoTaskReady", 0);
     if (!ShellExecuteExW(&execute)) {
         DWORD error = GetLastError();
-        gStatus = error == ERROR_CANCELLED
-            ? L"Administrator approval was cancelled."
-            : L"Could not start the elevated standby cleaner.";
+        gCleanerSetupBlocked=true;
+        const bool disableAuto=gCleanerSetupForAuto;
+        gCleanerSetupForAuto = false;
+        gCleanerSetupForManual = false;
+        if (disableAuto && !gCleanerInstalled) { gAutoPurge = false; SaveSettings(); }
+        else if (disableAuto && gCleanerInstalled) SaveSettings();
+        gStatus = error == ERROR_CANCELLED ? L"Cleaner setup was cancelled. N-Lite stayed unelevated." :
+            L"Could not start the one-time cleaner setup.";
         return false;
     }
-    gElevatedPurgeProcess = execute.hProcess;
-    gStatus = L"Waiting for the elevated standby purge to finish…";
+    gCleanerSetupProcess = execute.hProcess;
+    gStatus = L"Approve the one-time Windows prompt to enable standby cleaning.";
     return true;
 }
-static void PollElevatedPurge() {
-    if (!gElevatedPurgeProcess || WaitForSingleObject(gElevatedPurgeProcess, 0) != WAIT_OBJECT_0) return;
-    DWORD result = 1;
-    GetExitCodeProcess(gElevatedPurgeProcess, &result);
-    CloseHandle(gElevatedPurgeProcess);
-    gElevatedPurgeProcess = nullptr;
-    if (result == 0) {
-        gPurgeLatched = true;
-        gLastPurge = GetTickCount64();
-        UpdateMetrics();
-        gStatus = L"Elevated standby purge completed. Standby memory is now " + Bytes(gMetrics.standby) + L".";
-    } else if (result == 0xC0000061u) {
-        gStatus = L"Windows still denied the standby purge privilege, even when elevated.";
-    } else {
-        std::wostringstream msg;
-        msg << L"Elevated standby purge failed (NTSTATUS 0x" << std::hex << std::uppercase << result << L").";
-        gStatus = msg.str();
+static bool RequestCleanerTaskRun(bool manual) {
+    if (!gCleanerInstalled) return StartCleanerSetup(gAutoPurge, manual);
+    if (manual && !gManualCleanerPending) {
+        if (gCleanerRequestId == (std::numeric_limits<uint64_t>::max)()) {
+            gStatus = L"Could not create a new cleaner request. Restart N-Lite and try again.";
+            return false;
+        }
+        ++gCleanerRequestId;
+        gManualCleanerPending = true;
+        gLastDisplayedManualRequestId = gCleanerRequestId - 1;
     }
+    if (!WriteCleanerSettings()) return false;
+    const std::wstring task = L"N-Lite Cleaner " + gUserSid;
+    if (!RunSchtasks({L"/Run", L"/TN", task})) {
+        gStatus = manual ? L"Cleaner request queued; Windows has not started the task yet." :
+            L"Could not start the automatic cleaner task.";
+        return false;
+    }
+    if (manual) gStatus = L"Standby clean requested. Waiting for Windows.";
+    return true;
+}
+static void PollCleanerSetup() {
+    if (!gCleanerSetupProcess || WaitForSingleObject(gCleanerSetupProcess, 0) != WAIT_OBJECT_0) return;
+    DWORD result = 1;
+    GetExitCodeProcess(gCleanerSetupProcess, &result);
+    CloseHandle(gCleanerSetupProcess);
+    gCleanerSetupProcess = nullptr;
+    const bool forAuto = gCleanerSetupForAuto, forManual = gCleanerSetupForManual;
+    gCleanerSetupForAuto = false; gCleanerSetupForManual = false;
+    gCleanerInstalled = CleanerRegistrationValid();
+    gCleanerCurrentVersion = gCleanerInstalled && CleanerHelperCurrent();
+    gAutoTaskReady = gCleanerInstalled;
+    RegWriteDword(L"AutoTaskReady", gCleanerInstalled ? 1 : 0);
+    if (!gCleanerInstalled || !gCleanerCurrentVersion || result != 0) {
+        gCleanerSetupBlocked=true;
+        if (!gCleanerInstalled && forAuto) { gAutoPurge = false; SaveSettings(); }
+        else if (gCleanerInstalled) {
+            SaveSettings();
+            if (forManual) RequestCleanerTaskRun(true);
+            else if (gAutoPurge) RequestCleanerTaskRun(false);
+        }
+        if (gCleanerInstalled) gStatus = L"Cleaner helper update did not finish. The previous cleaner remains available.";
+        else gStatus = result == 0 ? L"Cleaner setup finished, but Windows could not verify the protected task." :
+            L"Cleaner setup failed. N-Lite remained unelevated.";
+        return;
+    }
+    gCleanerSetupBlocked=false;
+    SaveSettings();
+    if (forManual) RequestCleanerTaskRun(true);
+    else if (forAuto) gStatus = L"Automatic standby cleaning is set up. It checks once a minute.";
+    else gStatus = L"Standby cleaner is ready. Routine cleaning will not ask for administrator approval.";
+}
+static void PollCleanerStatus() {
+    if (!gCleanerInstalled) return;
+    CleanerStatus latest;
+    if (!ReadCleanerStatus(latest)) return;
+    if (latest.completedManualRequestId > gLastDisplayedManualRequestId &&
+        latest.completedManualRequestId >= gCleanerRequestId) {
+        gLastDisplayedManualRequestId = latest.completedManualRequestId;
+        gManualCleanerPending = false;
+        if (IsNtOk(static_cast<LONG>(latest.lastManualStatus))) {
+            UpdateMetrics();
+            gPurgeLatched = true;
+            gLastPurge = GetTickCount64();
+            gStatus = L"Standby clean finished. Standby memory is now " + Bytes(gMetrics.standby) + L".";
+        } else if (static_cast<DWORD>(latest.lastManualStatus) == 0xC0000061u) {
+            gStatus = L"Windows denied the cleaner privilege. No memory was changed.";
+        } else {
+            std::wostringstream message;
+            message << L"Standby clean failed (Windows status 0x" << std::hex << std::uppercase
+                << static_cast<DWORD>(latest.lastManualStatus) << L").";
+            gStatus = message.str();
+        }
+    }
+    if (latest.lastAutoTick && latest.lastAutoTick != gLastSeenPurgeTick) {
+        gLastSeenPurgeTick = latest.lastAutoTick;
+        gStatus = IsNtOk(static_cast<LONG>(latest.lastAutoStatus)) ?
+            L"Automatic standby cleaning finished." : L"Automatic standby cleaning was denied by Windows.";
+    }
+    gCleanerStatus = latest;
 }
 static void DoPurge() {
     UpdateMetrics();
@@ -655,25 +844,12 @@ static void DoPurge() {
         gStatus = L"The standby list is already empty.";
         return;
     }
-    const double before = gMetrics.standby;
-    LONG status = PurgeStandby();
-    if (IsNtOk(status)) {
-        gPurgeLatched = true;
-        gLastPurge = GetTickCount64();
-        UpdateMetrics();
-        double released = (std::max)(0.0, before - gMetrics.standby);
-        gStatus = released > 0
-            ? L"Standby list cleaned. Released " + Bytes(released) + L"."
-            : L"Windows accepted the purge, but standby memory is now " + Bytes(gMetrics.standby) + L".";
-    } else if ((status == static_cast<LONG>(0xC0000061L) || status == static_cast<LONG>(0xC0000022L)) && !IsAdmin()) {
-        RequestElevatedPurge();
-    } else if (status == static_cast<LONG>(0xC0000061L)) {
-        gStatus = L"Windows denied SeProfileSingleProcessPrivilege. Check the account's Windows security policy.";
-    } else {
-        std::wostringstream msg;
-        msg << L"Standby purge failed (NTSTATUS 0x" << std::hex << std::uppercase << static_cast<DWORD>(status) << L").";
-        gStatus = msg.str();
+    if (!gCleanerInstalled) {
+        StartCleanerSetup(false, true);
+        return;
     }
+    if (!gCleanerCurrentVersion && !gCleanerSetupBlocked && StartCleanerSetup(false, true)) return;
+    RequestCleanerTaskRun(true);
 }
 static void OpenAffinityMenu(ProcRow* p, POINT pt) {
     if (!p) return;
@@ -912,39 +1088,41 @@ static void DrawButton(HDC dc, RECT r, const std::wstring& s, int id, COLORREF b
     AddHit(r, id);
 }
 static RECT MainContent(int width) {
-    int available=width-188;
-    int margin=(std::min)(32,(std::max)(20,available/32));
-    int contentWidth=(std::max)(360,available-2*margin);
-    int left=188+(available-contentWidth)/2;
-    return R(left,0,contentWidth,0);
+    int margin=(std::min)(30,(std::max)(20,width/40));
+    return R(margin,0,(std::max)(1,width-2*margin),0);
 }
 static void DrawPageTitle(HDC dc,RECT content,const wchar_t* title,const wchar_t* subtitle) {
-    Txt(dc,title,content.left,69,W(content),34,C_TEXT,gFontTitle);
-    Txt(dc,subtitle,content.left,106,W(content),22,C_MUTED,gFont);
+    Txt(dc,title,content.left,82,W(content),31,C_TEXT,gFontTitle);
+    Txt(dc,subtitle,content.left,113,W(content),20,C_MUTED,gFont);
 }
 static void DrawHeader(HDC dc, int width,int height) {
-    RECT sidebar=R(0,0,188,height);Fill(dc,sidebar,RGB(15,19,29));
-    Line(dc,187,0,187,height,C_LINE);
-    Txt(dc,L"N Lite",20,15,145,30,C_TEXT,gFontMed);
-    Txt(dc,L"SYSTEM",20,63,140,18,C_MUTED,gFontSmall);
-    auto nav=[&](int y,int id,const wchar_t* glyph,const wchar_t* label,int page){
-        RECT r=R(12,y,164,36);bool active=gPage==page,hover=gNavHover==id;
-        if(active)Round(dc,r,RGB(242,243,247),RGB(242,243,247),8);
-        else if(hover)Round(dc,r,RGB(31,38,53),RGB(31,38,53),8);
-        COLORREF fg=active?RGB(20,23,31):(hover?C_TEXT:C_MUTED);
-        Txt(dc,glyph,r.left+12,r.top,22,H(r),active?C_ACCENT:fg,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-        Txt(dc,label,r.left+43,r.top,W(r)-51,H(r),fg,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    const int headerHeight=60;
+    RECT top=R(0,0,width,headerHeight);Fill(dc,top,C_PANEL);
+    Line(dc,0,headerHeight-1,width,headerHeight-1,C_LINE);
+    Round(dc,R(20,15,32,32),C_ACCENT,C_ACCENT,8);
+    Txt(dc,L"N",20,15,32,32,RGB(255,255,255),gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    Txt(dc,L"N-Lite",61,0,126,headerHeight,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    const int navWidth=103, navGap=4, navTotal=4*navWidth+3*navGap;
+    const int navStart=(width-navTotal)/2;
+    auto nav=[&](int index,int id,const wchar_t* label,int page){
+        RECT r=R(navStart+index*(navWidth+navGap),12,navWidth,40);
+        bool active=gPage==page,hover=gNavHover==id;
+        if(active)Round(dc,r,C_ACCENT_SOFT,C_ACCENT_SOFT,8);
+        else if(hover)Round(dc,r,C_NAV_HOVER,C_NAV_HOVER,8);
+        COLORREF fg=active?C_TEXT:C_MUTED;
+        Txt(dc,label,r.left+8,r.top,W(r)-16,H(r),fg,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        if(active)Fill(dc,R(r.left+24,r.bottom-3,W(r)-48,2),C_ACCENT);
         AddHit(r,id);
     };
-    nav(84,ID_MEMORY,L"◉",L"Memory",0);
-    nav(126,ID_PROCESSES,L"▦",L"Processes",1);
-    Line(dc,15,177,173,177,C_LINE);
-    Txt(dc,L"APP",20,191,140,18,C_MUTED,gFontSmall);
-    nav(211,ID_STARTUP,L"↗",L"Startup",2);
-    nav(253,ID_SETTINGS,L"⚙",L"Settings",3);
-    RECT top=R(188,0,width-188,48);Fill(dc,top,RGB(17,21,31));
-    Line(dc,188,47,width,47,C_LINE);
-    Txt(dc,L"N Lite",210,0,180,48,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    nav(0,ID_MEMORY,L"Memory",0);
+    nav(1,ID_PROCESSES,L"Processes",1);
+    nav(2,ID_STARTUP,L"Startup",2);
+    nav(3,ID_SETTINGS,L"Settings",3);
+    RECT theme=R(width-112,13,92,38);
+    Round(dc,theme,C_PANEL2,gNavHover==ID_THEME?C_ACCENT:C_LINE,8);
+    Txt(dc,gDarkTheme?L"Dark mode":L"Light mode",theme.left+5,theme.top,W(theme)-10,H(theme),C_TEXT,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    AddHit(theme,ID_THEME);
+    (void)height;
 }
 static HICON GetProcessIcon(const ProcRow& p) {
     if(p.path.empty()||p.path==L"Path unavailable")return nullptr;
@@ -957,7 +1135,7 @@ static void DrawProcesses(HDC dc, int cw, int ch) {
     RECT content=MainContent(cw);int tableX=content.left,tableW=W(content),tableY=193;
     DrawPageTitle(dc,content,L"Processes",L"View running apps and processes, then adjust how they use your system.");
     RECT search=R(content.left,142,W(content)-126,38);
-    Round(dc,search,C_PANEL,gSearchFocus?C_ACCENT:C_LINE,9);
+    Round(dc,search,C_FIELD,gSearchFocus?C_ACCENT:C_LINE,9);
     Txt(dc,gSearch.empty()?L"Search processes by name or path":L"Search  ·  "+gSearch,search.left+14,search.top, W(search)-28,H(search),gSearch.empty()?C_MUTED:C_TEXT,gFont);
     AddHit(search,ID_SEARCH);
     DrawButton(dc,R(content.right-108,142,108,38),L"Refresh",ID_REFRESH);
@@ -991,32 +1169,32 @@ static void DrawProcesses(HDC dc, int cw, int ch) {
         const ProcRow& p=gVisible[gScroll+i];int y=firstY+i*rowH;
         RECT rr=R(tableX+7,y,tableW-14,rowH-2);
         bool selected=p.pid==gSelectedPid,hover=p.pid==gHoveredPid;
-        if(selected)Round(dc,rr,RGB(38,47,73),RGB(64,78,116),8);
-        else if(hover)Round(dc,rr,RGB(30,38,56),RGB(30,38,56),8);
-        else if(i%2)Round(dc,rr,RGB(23,29,43),RGB(23,29,43),8);
+        if(selected)Round(dc,rr,C_SELECTED,C_ACCENT_SOFT,8);
+        else if(hover)Round(dc,rr,C_NAV_HOVER,C_NAV_HOVER,8);
+        else if(i%2)Round(dc,rr,C_ROW,C_ROW,8);
         AddHit(rr,100,p.pid);
         int depth=static_cast<int>(p.ppid), base=tableX+17+(std::min)(depth,8)*17;
         if(p.hasChildren){
             POINT tri[3];int ty=y+15;
-            if(gExpanded[p.pid]){tri[0]={base,ty};tri[1]={base+9,ty};tri[2]={base+4,ty+6};}
+            if(gExpanded[p.groupKey]){tri[0]={base,ty};tri[1]={base+9,ty};tri[2]={base+4,ty+6};}
             else{tri[0]={base,ty};tri[1]={base,ty+9};tri[2]={base+6,ty+4};}
             HBRUSH b=CreateSolidBrush(selected?C_ACCENT:C_MUTED);HGDIOBJ old=SelectObject(dc,b);Polygon(dc,tri,3);SelectObject(dc,old);DeleteObject(b);
             AddHit(R(base-4,y+5,21,rowH-12),101,p.pid);
         }
         int ix=base+13;HICON icon=GetProcessIcon(p);
         if(icon)DrawIconEx(dc,ix,y+12,icon,18,18,0,nullptr,DI_NORMAL);
-        else {Round(dc,R(ix,y+13,16,16),RGB(53,61,83),RGB(53,61,83),5);Txt(dc,L"N",ix,y+12,16,18,C_ACCENT,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);}
-        Txt(dc,p.name,ix+24,y,pidX-(ix+29),rowH-2,selected?C_TEXT:RGB(203,212,228),gFont);
+        else {Round(dc,R(ix,y+13,16,16),C_TRACK,C_TRACK,5);Txt(dc,L"N",ix,y+12,16,18,C_ACCENT,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);}
+        Txt(dc,p.name,ix+24,y,pidX-(ix+29),rowH-2,selected?C_TEXT:C_TEXT,gFont);
         Txt(dc,std::to_wstring(p.pid),pidX,y,cpuX-pidX-12,rowH-2,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
         Txt(dc,Percent(p.cpu),cpuX,y,ramX-cpuX-12,rowH-2,C_TEXT,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-        SIZE_T shownWorking=p.hasChildren&&!gExpanded[p.pid]?p.treeWorking:p.working;
-        SIZE_T shownPrivate=p.hasChildren&&!gExpanded[p.pid]?p.treePrivateBytes:p.privateBytes;
+        SIZE_T shownWorking=p.groupHeader?p.treeWorking:p.working;
+        SIZE_T shownPrivate=p.groupHeader?p.treePrivateBytes:p.privateBytes;
         Txt(dc,Bytes(shownWorking),ramX,y,privateX-ramX-12,rowH-2,C_TEXT,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
         Txt(dc,Bytes(shownPrivate),privateX,y,table.right-privateX-20,rowH-2,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
     }
     if(gVisible.empty())Txt(dc,L"No processes match that search.",tableX+22,firstY+20,tableW-44,36,C_MUTED,gFont);
     if(maxScroll>0){
-        RECT track=R(table.right-7,firstY,3,rows*rowH);Fill(dc,track,RGB(31,38,55));
+        RECT track=R(table.right-7,firstY,3,rows*rowH);Fill(dc,track,C_TRACK);
         int thumbH=(std::max)(24,H(track)*rows/static_cast<int>(gVisible.size()));
         int thumbY=track.top+(H(track)-thumbH)*gScroll/maxScroll;
         Round(dc,R(track.left-2,thumbY,7,thumbH),C_ACCENT,C_ACCENT,5);
@@ -1026,7 +1204,7 @@ static void DrawProcesses(HDC dc, int cw, int ch) {
     Txt(dc,L"Right-click for actions  ·  Expand groups with the chevron or double-click",tableX+170,table.bottom-25,tableW-190,19,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
 }
 static void DrawSwitch(HDC dc,RECT r,bool enabled,int id) {
-    Round(dc,r,enabled?C_ACCENT:RGB(49,56,71),enabled?C_ACCENT:C_LINE,H(r)/2);
+    Round(dc,r,enabled?C_ACCENT:C_TRACK,enabled?C_ACCENT:C_LINE,H(r)/2);
     int d=H(r)-6,x=enabled?r.right-d-3:r.left+3;
     Round(dc,R(x,r.top+3,d,d),RGB(250,251,255),RGB(250,251,255),d/2);
     AddHit(r,id);
@@ -1044,78 +1222,109 @@ static void DrawMetricCard(HDC dc, RECT r, const wchar_t* label, const std::wstr
     Txt(dc,sub,r.left+16,r.top+57,W(r)-30,15,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
 }
 static void DrawMemory(HDC dc, int cw, int ch) {
-    RECT content=MainContent(cw);DrawPageTitle(dc,content,L"Memory",L"Standby cleanup and system timer controls.");
-    int gap=10,cardY=151,cardH=76,cardW=(W(content)-gap*3)/4;
-    double used=(std::max)(0.0,gMetrics.total-gMetrics.available);
-    DrawMetricCard(dc,R(content.left,cardY,cardW,cardH),L"IN USE",Bytes(used),Percent(gMetrics.total?100*used/gMetrics.total:0),C_ACCENT);
-    DrawMetricCard(dc,R(content.left+cardW+gap,cardY,cardW,cardH),L"AVAILABLE",Bytes(gMetrics.available),L"Free "+Bytes(gMetrics.free),C_GREEN);
-    DrawMetricCard(dc,R(content.left+2*(cardW+gap),cardY,cardW,cardH),L"STANDBY",Bytes(gMetrics.standby),L"Cached and reclaimable RAM",C_AMBER);
-    std::wstring pagefileValue=Bytes(gMetrics.pagefileUsed)+L" / "+Bytes(gMetrics.pagefileTotal);
-    std::wstring commitSub=L"Commit "+Bytes(gMetrics.commit)+L" / "+Bytes(gMetrics.commitLimit);
-    DrawMetricCard(dc,R(content.left+3*(cardW+gap),cardY,cardW,cardH),L"PAGE FILE",pagefileValue,commitSub,C_ACCENT);
+    RECT content=MainContent(cw);
+    DrawPageTitle(dc,content,L"Memory",L"Live memory use and standby cleanup.");
+    const MemoryLayout layout=ComputeMemoryLayout(cw,ch);
+    RECT memory{layout.memory.left,layout.memory.top,layout.memory.right,layout.memory.bottom};
+    RECT clean{layout.cleaner.left,layout.cleaner.top,layout.cleaner.right,layout.cleaner.bottom};
+    RECT timer{layout.timer.left,layout.timer.top,layout.timer.right,layout.timer.bottom};
+    Card(dc,memory);
+    Card(dc,clean);
 
-    RECT clean=R(content.left,241,W(content),170);Card(dc,clean);
-    Txt(dc,L"Standby cleaner",clean.left+18,clean.top+14,W(clean)-110,25,C_TEXT,gFontMed);
-    Txt(dc,L"Clear cached standby pages automatically when memory reaches your threshold.",clean.left+18,clean.top+42,W(clean)-120,20,C_MUTED,gFontSmall);
-    DrawSwitch(dc,R(clean.right-68,clean.top+20,48,27),gAutoPurge,ID_AUTO);
+    const double used=(std::max)(0.0,gMetrics.total-gMetrics.available);
+    const double total=(std::max)(1.0,gMetrics.total);
+    const double usedRatio=(std::max)(0.0,(std::min)(1.0,used/total));
+    const int pad=18;
+    Txt(dc,L"Memory usage",memory.left+pad,memory.top+16,W(memory)-2*pad,24,C_TEXT,gFontMed);
+    Txt(dc,L"IN USE",memory.left+pad,memory.top+57,110,16,C_MUTED,gFontSmall);
+    Txt(dc,Bytes(used)+L" / "+Bytes(gMetrics.total),memory.left+pad,memory.top+75,W(memory)-2*pad-92,34,C_TEXT,gFontBold);
+    RECT percent=R(memory.right-91,memory.top+77,73,27);
+    Round(dc,percent,C_ACCENT_SOFT,C_ACCENT_SOFT,13);
+    Txt(dc,Percent(usedRatio*100)+L" used",percent.left+4,percent.top,W(percent)-8,H(percent),C_ACCENT,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
 
-    int inside=W(clean)-36,thresholdW=inside*36/100,intervalW=inside*37/100;
-    int x1=clean.left+18,x2=x1+thresholdW+14,x3=x2+intervalW+14;
-    int actionW=clean.right-18-x3;
-    int labelY=clean.top+72,fieldY=clean.top+93,fieldH=36;
-    Txt(dc,L"Threshold",x1,labelY,thresholdW,17,C_MUTED,gFontSmall);
-    Txt(dc,L"Check interval",x2,labelY,intervalW,17,C_MUTED,gFontSmall);
-    Txt(dc,L"Action",x3,labelY,actionW,17,C_MUTED,gFontSmall);
+    const int barX=memory.left+pad,barY=memory.top+123,barW=W(memory)-2*pad;
+    const int usedW=static_cast<int>(barW*usedRatio);
+    const int standbyW=static_cast<int>(barW*(std::max)(0.0,(std::min)(1.0,gMetrics.standby/total)));
+    const int freeW=(std::max)(0,barW-usedW-standbyW);
+    Round(dc,R(barX,barY,barW,9),C_TRACK,C_TRACK,5);
+    if(usedW>0)Round(dc,R(barX,barY,usedW,9),C_ACCENT,C_ACCENT,5);
+    if(standbyW>0)Fill(dc,R(barX+usedW,barY,standbyW,9),C_AMBER);
+    if(freeW>0)Round(dc,R(barX+usedW+standbyW,barY,freeW,9),C_GREEN,C_GREEN,5);
+    Round(dc,R(barX,memory.top+145,7,7),C_ACCENT,C_ACCENT,4);
+    Txt(dc,L"In use  "+Bytes(used),barX+13,memory.top+139,140,20,C_MUTED,gFontSmall);
+    Round(dc,R(barX+151,memory.top+145,7,7),C_AMBER,C_AMBER,4);
+    Txt(dc,L"Standby  "+Bytes(gMetrics.standby),barX+164,memory.top+139,160,20,C_MUTED,gFontSmall);
+    Round(dc,R(barX+322,memory.top+145,7,7),C_GREEN,C_GREEN,4);
+    Txt(dc,L"Free  "+Bytes(gMetrics.free),barX+335,memory.top+139,W(memory)-2*pad-335,20,C_MUTED,gFontSmall);
+    Line(dc,memory.left+pad,memory.top+174,memory.right-pad,memory.top+174,C_LINE);
 
-    RECT field=R(x1,fieldY,thresholdW,fieldH);
-    Round(dc,field,RGB(16,20,29),gThresholdFocus?C_ACCENT:C_LINE,8);
-    Txt(dc,gThresholdFocus?gThresholdEdit:std::to_wstring(gThresholdMB),field.left+12,field.top,W(field)-55,H(field),C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
-    Line(dc,field.right-43,field.top+6,field.right-43,field.bottom-6,C_LINE);
-    Txt(dc,L"MB",field.right-41,field.top,38,H(field),C_MUTED,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-    if(gThresholdFocus){int cx=field.left+12+static_cast<int>((gThresholdFocus?gThresholdEdit:std::to_wstring(gThresholdMB)).size())*9;Line(dc,cx,field.top+9,cx,field.bottom-9,C_ACCENT,2);}
-    AddHit(field,ID_THRESHOLD_FIELD);
+    const int rowX=memory.left+pad,rowW=W(memory)-2*pad;
+    Txt(dc,L"Available",rowX,memory.top+187,150,24,C_MUTED,gFont);
+    Txt(dc,Bytes(gMetrics.available),rowX+150,memory.top+185,rowW-150,28,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    Txt(dc,L"Page file",rowX,memory.top+222,150,24,C_MUTED,gFont);
+    Txt(dc,Bytes(gMetrics.pagefileUsed)+L" / "+Bytes(gMetrics.pagefileTotal),rowX+150,memory.top+220,rowW-150,28,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    Txt(dc,L"Commit",rowX,memory.top+257,150,24,C_MUTED,gFont);
+    Txt(dc,Bytes(gMetrics.commit)+L" / "+Bytes(gMetrics.commitLimit),rowX+150,memory.top+255,rowW-150,28,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
 
-    RECT interval=R(x2,fieldY,intervalW,fieldH);
-    Round(dc,interval,RGB(16,20,29),gIntervalOpen?C_ACCENT:C_LINE,8);
-    Txt(dc,IntervalLabel(gIntervalSec),interval.left+13,interval.top,W(interval)-46,H(interval),C_TEXT,gFont,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
-    Txt(dc,gIntervalOpen?L"⌃":L"⌄",interval.right-32,interval.top,24,H(interval),C_MUTED,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    const int cleanPad=16;
+    const bool setupBusy=gCleanerSetupProcess&&WaitForSingleObject(gCleanerSetupProcess,0)==WAIT_TIMEOUT;
+    const wchar_t* state=setupBusy?L"Setting up":(gCleanerCurrentVersion?L"Ready":(gCleanerInstalled?L"Update helper":L"Setup needed"));
+    const COLORREF stateColor=gCleanerCurrentVersion?C_GREEN:C_AMBER;
+    RECT chip=R(clean.right-cleanPad-104,clean.top+17,104,23);
+    Round(dc,chip,gCleanerCurrentVersion?C_GREEN_SOFT:C_AMBER_SOFT,gCleanerCurrentVersion?C_GREEN_SOFT:C_AMBER_SOFT,12);
+    Round(dc,R(chip.left+9,chip.top+8,7,7),stateColor,stateColor,4);
+    Txt(dc,state,chip.left+22,chip.top,W(chip)-27,H(chip),stateColor,gFontSmall);
+    Txt(dc,L"Standby cleaner",clean.left+cleanPad,clean.top+16,W(clean)-132,24,C_TEXT,gFontMed);
+    Txt(dc,L"One-time setup; routine cleans stay unelevated.",clean.left+cleanPad,clean.top+43,W(clean)-2*cleanPad,19,C_MUTED,gFontSmall);
+
+    const int innerW=W(clean)-2*cleanPad;
+    Txt(dc,L"Threshold · MB",clean.left+cleanPad,clean.top+74,innerW,17,C_MUTED,gFontSmall);
+    RECT threshold=R(clean.left+cleanPad,clean.top+94,innerW,35);
+    Round(dc,threshold,C_FIELD,gThresholdFocus?C_ACCENT:C_LINE,8);
+    Txt(dc,gThresholdFocus?gThresholdEdit:std::to_wstring(gThresholdMB),threshold.left+12,threshold.top, W(threshold)-20,H(threshold),C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    AddHit(threshold,ID_THRESHOLD_FIELD);
+
+    Txt(dc,L"Automatic check",clean.left+cleanPad,clean.top+139,innerW,17,C_MUTED,gFontSmall);
+    RECT interval=R(clean.left+cleanPad,clean.top+159,innerW,35);
+    Round(dc,interval,C_FIELD,gIntervalOpen?C_ACCENT:C_LINE,8);
+    Txt(dc,L"Every "+IntervalLabel(gIntervalSec),interval.left+12,interval.top,W(interval)-42,H(interval),C_TEXT,gFont,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    Txt(dc,gIntervalOpen?L"^":L"v",interval.right-30,interval.top,22,H(interval),C_MUTED,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
     AddHit(interval,ID_INTERVAL_FIELD);
 
-    RECT purge=R(x3,fieldY,actionW,fieldH);
-    DrawButton(dc,purge,L"Clean now",ID_PURGE,C_ACCENT,RGB(255,255,255),true);
-    Txt(dc,gStatus,clean.left+18,clean.bottom-22,W(clean)-36,15,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+    Txt(dc,L"Auto clean",clean.left+cleanPad,clean.top+204,innerW-63,20,C_TEXT,gFontMed);
+    Txt(dc,L"When standby reaches the threshold",clean.left+cleanPad,clean.top+224,innerW-70,16,C_MUTED,gFontSmall);
+    DrawSwitch(dc,R(clean.right-cleanPad-46,clean.top+207,46,26),gAutoPurge,ID_AUTO);
 
-    RECT timer=R(content.left,425,W(content),90);Card(dc,timer);
-    Txt(dc,L"Timer resolution",timer.left+18,timer.top+11,260,24,C_TEXT,gFontMed);
-    Txt(dc,L"Keep the selected system timing precision active while N-Lite runs.",timer.left+18,timer.top+37,W(timer)-240,19,C_MUTED,gFontSmall);
-    int sx=timer.left+18,sy=timer.top+69,sw=(std::max)(170,W(timer)-310);
-    Fill(dc,R(sx,sy-2,sw,4),RGB(57,64,81));
+    DrawButton(dc,R(clean.left+cleanPad,clean.top+251,innerW,38),L"Clean now",ID_PURGE,C_ACCENT,RGB(255,255,255),true);
+    Txt(dc,gStatus,clean.left+cleanPad,clean.bottom-23,innerW,16,C_MUTED,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+
+    Txt(dc,L"Timer resolution",timer.left+18,timer.top+12,210,22,C_TEXT,gFontMed);
+    Txt(dc,L"Released when N-Lite exits.",timer.left+18,timer.top+38,205,17,C_MUTED,gFontSmall);
+    const int sx=timer.left+232,sw=(std::max)(120,W(timer)-385),sy=timer.top+37;
+    Fill(dc,R(sx,sy-2,sw,4),C_TRACK);
     double span=static_cast<double>(gTimerMaxResolution-gTimerMinResolution);
     double ratio=span?static_cast<double>(gTimerResolution-gTimerMinResolution)/span:0.0;
     int knobX=sx+static_cast<int>(ratio*sw);
     Fill(dc,R(sx,sy-2,(std::max)(0,knobX-sx),4),C_ACCENT);
     Round(dc,R(knobX-7,sy-8,14,16),gTimerEnabled?C_ACCENT:C_MUTED,gTimerEnabled?C_ACCENT:C_MUTED,8);
     AddHit(R(sx,sy-15,sw,31),ID_TIMER_PLUS);
-    RECT value=R(timer.right-159,timer.top+20,86,34);
-    Round(dc,value,RGB(16,20,29),C_LINE,8);
-    Txt(dc,TimerText(gTimerResolution),value.left+5,value.top,W(value)-10,H(value),C_TEXT,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-    DrawSwitch(dc,R(timer.right-61,timer.top+24,44,26),gTimerEnabled,ID_TIMER_TOGGLE);
+    Txt(dc,TimerText(gTimerResolution),timer.right-138,timer.top+16,81,39,C_TEXT,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    DrawSwitch(dc,R(timer.right-48,timer.top+23,32,26),gTimerEnabled,ID_TIMER_TOGGLE);
 
     if(gIntervalOpen){
         static const unsigned choices[]={60,120,300,600,900,1800,3600,7200};
-        int optionH=29,popupX=interval.left,popupY=interval.bottom+5;
-        RECT pop=R(popupX,popupY,intervalW,(sizeof(choices)/sizeof(choices[0]))*optionH+10);
-        Round(dc,pop,RGB(22,27,39),C_LINE,10);
-        for(int i=0;i<static_cast<int>(sizeof(choices)/sizeof(choices[0]));++i){
-            RECT option=R(pop.left+5,pop.top+5+i*optionH,W(pop)-10,optionH);
-            bool active=choices[i]==gIntervalSec;
-            if(gIntervalHover==i||active)Round(dc,option,gIntervalHover==i?RGB(41,49,68):RGB(33,41,59),gIntervalHover==i?RGB(41,49,68):RGB(33,41,59),6);
-            Txt(dc,IntervalLabel(choices[i]),option.left+10,option.top,W(option)-38,H(option),C_TEXT,gFontSmall,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
-            if(active)Txt(dc,L"✓",option.right-27,option.top,19,H(option),C_GREEN,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        const int optionH=25,rows=4,popH=rows*optionH+10;
+        RECT pop=R(interval.left,interval.bottom+4,W(interval),popH);
+        Round(dc,pop,C_PANEL,C_LINE,9);
+        for(int i=0;i<8;++i){
+            const int column=i/rows,row=i%rows,colW=(W(pop)-14)/2;
+            RECT option=R(pop.left+5+column*colW,pop.top+5+row*optionH,colW-2,optionH);
+            const bool active=choices[i]==gIntervalSec,hover=gIntervalHover==i;
+            if(hover||active)Round(dc,option,active?C_ACCENT_SOFT:C_NAV_HOVER,active?C_ACCENT_SOFT:C_NAV_HOVER,5);
+            Txt(dc,IntervalLabel(choices[i]),option.left+7,option.top,W(option)-14,H(option),C_TEXT,gFontSmall);
             AddHit(option,ID_INTERVAL_OPTION,choices[i]);
         }
     }
-    (void)ch;
 }
 static void DrawProcesses(HDC dc, int cw, int ch);
 static void DrawStartup(HDC dc,int cw) {
@@ -1187,10 +1396,10 @@ static void ResizePopup() {
     InvalidateRect(gPopup.hwnd,nullptr,FALSE);
 }
 static void DrawPopupItem(HDC dc,int x,int y,int w,int h,const std::wstring& label,const wchar_t* glyph,bool hover,bool arrow=false,bool checked=false,bool danger=false) {
-    if(hover)Round(dc,R(x+4,y,w-8,h-2),RGB(42,51,74),RGB(42,51,74),8);
-    Round(dc,R(x+12,y+7,23,23),danger?RGB(76,39,50):RGB(44,53,77),danger?RGB(105,47,60):RGB(44,53,77),7);
+    if(hover)Round(dc,R(x+4,y,w-8,h-2),C_NAV_HOVER,C_NAV_HOVER,8);
+    Round(dc,R(x+12,y+7,23,23),danger?C_AMBER_SOFT:C_ACCENT_SOFT,danger?C_RED:C_ACCENT_SOFT,7);
     Txt(dc,glyph,x+12,y+7,23,23,danger?C_RED:C_ACCENT,gFontSmall,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-    Txt(dc,label,x+45,y,w-78,h-2,danger?RGB(255,184,191):C_TEXT,gFont);
+    Txt(dc,label,x+45,y,w-78,h-2,danger?C_RED:C_TEXT,gFont);
     if(arrow)Txt(dc,L"›",x+w-30,y,18,h-2,C_MUTED,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
     if(checked)Txt(dc,L"✓",x+w-31,y,18,h-2,C_GREEN,gFontMed,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
 }
@@ -1293,7 +1502,7 @@ static LRESULT CALLBACK PopupWndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
     }
     case WM_PAINT:{
         PAINTSTRUCT ps;HDC dc=BeginPaint(h,&ps);RECT cr;GetClientRect(h,&cr);
-        HBRUSH b=CreateSolidBrush(RGB(20,25,37));FillRect(dc,&cr,b);DeleteObject(b);
+        HBRUSH b=CreateSolidBrush(C_PANEL);FillRect(dc,&cr,b);DeleteObject(b);
         Line(dc,246,10,246,cr.bottom-10,C_LINE);
         int mainRows=6;
         for(int i=0;i<mainRows;i++){
@@ -1306,14 +1515,16 @@ static LRESULT CALLBACK PopupWndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
         ProcRow* p=FindProcess(gPopup.pid);
         if(gPopup.subKind<0){
             if(p){
+                auto group=std::find_if(gVisible.begin(),gVisible.end(),[&](const ProcRow& row){return row.groupHeader&&row.pid==gPopup.pid;});
+                const bool grouped=group!=gVisible.end();
                 HICON icon=GetProcessIcon(*p);if(icon)DrawIconEx(dc,270,24,icon,34,34,0,nullptr,DI_NORMAL);
                 Txt(dc,p->name,314,19,gPopup.width-334,25,C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
                 Txt(dc,L"PID  "+std::to_wstring(p->pid),314,44,gPopup.width-334,18,C_MUTED,gFontSmall);
                 Line(dc,263,77,gPopup.width-14,77,C_LINE);
-                Txt(dc,L"Working set",266,90,110,20,C_MUTED,gFontSmall);
-                Txt(dc,Bytes(p->hasChildren&&!gExpanded[p->pid]?p->treeWorking:p->working),380,90,gPopup.width-398,20,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-                Txt(dc,L"CPU usage",266,121,110,20,C_MUTED,gFontSmall);
-                Txt(dc,Percent(p->cpu),380,121,gPopup.width-398,20,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+                Txt(dc,grouped?L"Group working set":L"Working set",266,90,128,20,C_MUTED,gFontSmall);
+                Txt(dc,Bytes(grouped?group->treeWorking:p->working),394,90,gPopup.width-412,20,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+                Txt(dc,grouped?L"Group CPU usage":L"CPU usage",266,121,128,20,C_MUTED,gFontSmall);
+                Txt(dc,Percent(grouped?group->cpu:p->cpu),394,121,gPopup.width-412,20,C_TEXT,gFontMed,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
                 Txt(dc,L"Choose an action to see its options.",266,168,gPopup.width-286,36,C_MUTED,gFontSmall,DT_LEFT|DT_TOP|DT_WORDBREAK);
             }else Txt(dc,L"Process is no longer running.",266,24,gPopup.width-282,30,C_MUTED,gFont);
         }else{
@@ -1371,8 +1582,10 @@ static void CommitThresholdEdit() {
 }
 static void SaveToggleAuto() {
     if(gAutoPurge){gAutoPurge=false;SaveSettings();gStatus=L"Automatic standby cleaning disabled.";return;}
-    gAutoPurge=true;SaveSettings();RegWriteDword(L"PurgeArmed",1);
-    RequestAutoTaskInstall();
+    gAutoPurge=true;
+    SaveSettings();
+    if(gCleanerInstalled&&gCleanerCurrentVersion)RequestCleanerTaskRun(false);
+    else if(!StartCleanerSetup(true,false)&&gCleanerInstalled){SaveSettings();RequestCleanerTaskRun(false);}
 }
 static void HandleClick(int x,int y,bool dbl) {
     Hit* target=nullptr;
@@ -1392,6 +1605,7 @@ static void HandleClick(int x,int y,bool dbl) {
     else if(id==ID_PROCESSES){gPage=1;gSearchFocus=false;RefreshProcesses();}
     else if(id==ID_STARTUP){gPage=2;gSearchFocus=false;}
     else if(id==ID_SETTINGS){gPage=3;gSearchFocus=false;}
+    else if(id==ID_THEME){gDarkTheme=!gDarkTheme;ApplyThemeColors();RegWriteDword(L"ThemeDark",gDarkTheme?1:0);ApplyWindowChromeTheme(gWnd);}
     else if(id==ID_UPDATE)InstallLatestUpdate();
     else if(id==ID_UPDATE_CHECK_NOW){CheckForUpdatesAsync();}
     else if(id==ID_OPEN_GITHUB)ShellExecuteW(gWnd,L"open",L"https://github.com/gxlka/N-Lite",nullptr,nullptr,SW_SHOWNORMAL);
@@ -1402,7 +1616,6 @@ static void HandleClick(int x,int y,bool dbl) {
     else if(id==ID_INTERVAL_FIELD){gIntervalOpen=!gIntervalOpen;gIntervalHover=-1;}
     else if(id==ID_INTERVAL_OPTION){gIntervalSec=target->data;gIntervalOpen=false;gIntervalHover=-1;SaveSettings();gStatus=L"Automatic clean interval saved.";}
     else if(id==ID_PURGE)DoPurge();
-    else if(id==ID_ELEVATE)RequestElevatedPurge();
     else if(id==ID_AUTOSTART){
         bool next=!gAutoStart;
         if(SetAutoStart(next)){gAutoStart=next;gStatus=next?L"N-Lite will start with Windows.":L"Windows startup entry removed.";}
@@ -1442,13 +1655,13 @@ static void HandleClick(int x,int y,bool dbl) {
     else if(id==100||id==101){
         gSelectedPid=target->data;
         if((id==101&&!dbl)||(id==100&&dbl)){
-            auto currentRow=std::find_if(gVisible.begin(),gVisible.end(),[](const ProcRow& row){return row.pid==gSelectedPid;});
-            int screenRow=currentRow==gVisible.end()?0:static_cast<int>(currentRow-gVisible.begin())-gScroll;
-            auto p=std::find_if(gProcs.begin(),gProcs.end(),[&](const ProcRow& a){return a.pid==gSelectedPid;});
-            if(p!=gProcs.end()&&p->hasChildren){
-                gExpanded[p->pid]=!gExpanded[p->pid];
+            auto currentRow=std::find_if(gVisible.begin(),gVisible.end(),[&](const ProcRow& row){return row.pid==gSelectedPid&&row.groupHeader;});
+            if(currentRow!=gVisible.end()){
+                const std::wstring groupKey=currentRow->groupKey;
+                int screenRow=static_cast<int>(currentRow-gVisible.begin())-gScroll;
+                gExpanded[groupKey]=!gExpanded[groupKey];
                 RefreshProcesses();
-                auto anchored=std::find_if(gVisible.begin(),gVisible.end(),[](const ProcRow& row){return row.pid==gSelectedPid;});
+                auto anchored=std::find_if(gVisible.begin(),gVisible.end(),[&](const ProcRow& row){return row.groupHeader&&row.groupKey==groupKey;});
                 if(anchored!=gVisible.end())gScroll=(std::max)(0,static_cast<int>(anchored-gVisible.begin())-screenRow);
             }
         }
@@ -1469,7 +1682,8 @@ static void ShowTrayMenu() {
 static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
     switch(msg){
     case WM_CREATE: {
-        gWnd=h; LoadNt(); LoadSettings(); gAutoStart=ReadAutoStart();gHasProcessOverrides=ProcessOverridesExist();
+        gWnd=h; gUserSid=CurrentUserSid();gCleanerRoot=ProgramDataNlite();
+        LoadNt(); LoadSettings(); gAutoStart=ReadAutoStart();gHasProcessOverrides=ProcessOverridesExist();
         SYSTEM_INFO si{};GetSystemInfo(&si);gPageSize=si.dwPageSize?si.dwPageSize:4096;
         LoadTimerRange();if(gTimerEnabled)SetTimerRequest(true);
         gFont=CreateFontW(-15,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
@@ -1478,13 +1692,16 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
         gFontBold=CreateFontW(-22,0,0,0,FW_BOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
         gFontTitle=CreateFontW(-27,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
         AddTray(); SetTimer(h,TIMER_REFRESH,2200,nullptr); SetTimer(h,TIMER_UPDATE_CHECK,6u*60u*60u*1000u,nullptr); UpdateMetrics(); RefreshProcesses();
-        BOOL dark=TRUE;DwmSetWindowAttribute(h,19,&dark,sizeof(dark));DwmSetWindowAttribute(h,20,&dark,sizeof(dark));
-        COLORREF caption=C_BG,titleText=C_TEXT,border=C_BG;DwmSetWindowAttribute(h,35,&caption,sizeof(caption));DwmSetWindowAttribute(h,36,&titleText,sizeof(titleText));DwmSetWindowAttribute(h,34,&border,sizeof(border));
+        ApplyWindowChromeTheme(h);
+        if(gAutoPurge&&!gCleanerCurrentVersion&&!StartCleanerSetup(true,false)&&gCleanerInstalled)RequestCleanerTaskRun(false);
         CheckForUpdatesAsync();
         return 0;
     }
     case WM_GETMINMAXINFO: {
-        auto m=reinterpret_cast<MINMAXINFO*>(lp);m->ptMinTrackSize.x=960;m->ptMinTrackSize.y=620;return 0;
+        auto m=reinterpret_cast<MINMAXINFO*>(lp);
+        RECT minimum{0,0,960,620};
+        AdjustWindowRectEx(&minimum,WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,FALSE,0);
+        m->ptMinTrackSize.x=W(minimum);m->ptMinTrackSize.y=H(minimum);return 0;
     }
     case WM_SIZE:
         if(wp==SIZE_MINIMIZED)HideToTray();else InvalidateRect(h,nullptr,FALSE);return 0;
@@ -1501,25 +1718,18 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
     case WM_TIMER:
         if(wp==TIMER_UPDATE_CHECK){CheckForUpdatesAsync();return 0;}
         if(wp==TIMER_REFRESH){
-            PollElevatedPurge();
+            PollCleanerSetup();
+            PollCleanerStatus();
+            if(gManualCleanerPending)RequestCleanerTaskRun(true);
             if(IsWindowVisible(h))UpdateMetrics();
             if((IsWindowVisible(h)&&gPage==1)||(gHasProcessOverrides&&GetTickCount()-gLastRefresh>=5000))RefreshProcesses();
-            if(gAutoPurge){
-                DWORD ready=0,enabled=0;RegReadDword(L"AutoTaskReady",ready);RegReadDword(L"AutoPurge",enabled);gAutoTaskReady=ready!=0;
-                if(!enabled){gAutoPurge=false;gStatus=L"Automatic cleaning setup failed or was disabled.";SaveSettings();}
-                uint64_t last=RegReadQword(L"LastAutoPurgeTick",0);
-                if(last&&last!=gLastSeenPurgeTick){
-                    gLastSeenPurgeTick=last;DWORD result=0;RegReadDword(L"LastAutoPurgeStatus",result);
-                    gStatus=static_cast<LONG>(result)>=0?L"Automatic standby purge completed.":L"Automatic purge was denied by Windows.";
-                }
-            }
             if(IsWindowVisible(h))InvalidateRect(h,nullptr,FALSE);
         } return 0;
     case WM_MOUSEMOVE:{
         POINT pt{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};DWORD hover=0;int nav=-1,intervalHover=-1;bool hand=false;
         static const unsigned choices[]={60,120,300,600,900,1800,3600,7200};
         for(auto it=gHits.rbegin();it!=gHits.rend();++it)if(Inside(it->r,pt.x,pt.y)){
-            if(it->id==ID_MEMORY||it->id==ID_PROCESSES||it->id==ID_STARTUP||it->id==ID_SETTINGS){nav=it->id;hand=true;}
+            if(it->id==ID_MEMORY||it->id==ID_PROCESSES||it->id==ID_STARTUP||it->id==ID_SETTINGS||it->id==ID_THEME){nav=it->id;hand=true;}
             if(gPage==1&&(it->id==100||it->id==101)){hover=it->data;hand=true;}
             if(gPage==1&&it->id>=ID_SORT_NAME&&it->id<=ID_SORT_PRIVATE)hand=true;
             if(it->id==ID_INTERVAL_FIELD||it->id==ID_INTERVAL_OPTION)hand=true;
@@ -1600,7 +1810,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
         gExiting=true;DestroyWindow(h);return 0;
     }
     case WM_DESTROY:
-        if(gElevatedPurgeProcess){CloseHandle(gElevatedPurgeProcess);gElevatedPurgeProcess=nullptr;}
+        if(gCleanerSetupProcess){CloseHandle(gCleanerSetupProcess);gCleanerSetupProcess=nullptr;}
         if(gPopup.hwnd)DestroyWindow(gPopup.hwnd);
         KillTimer(h,TIMER_REFRESH);KillTimer(h,TIMER_UPDATE_CHECK);SetTimerRequest(false);RemoveTray();
         for(auto& kv:gProcessIcons)if(kv.second)DestroyIcon(kv.second);
@@ -1614,9 +1824,8 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
 int WINAPI wWinMain(HINSTANCE inst,HINSTANCE, PWSTR cmd,int show) {
     gExePath.resize(32768);DWORD n=GetModuleFileNameW(nullptr,gExePath.data(),static_cast<DWORD>(gExePath.size()));gExePath.resize(n);
     std::wstring args=cmd?cmd:L"";
-    if(args.find(L"--purge-once")!=std::wstring::npos){LoadNt();LONG status=PurgeStandby();return IsNtOk(status)?0:static_cast<int>(status);}
-    if(args.find(L"--install-auto-task")!=std::wstring::npos)return InstallAutoCleanTask()?0:1;
-    if(args.find(L"--auto-clean-check")!=std::wstring::npos){LoadNt();RunAutoCleanCheck();return 0;}
+    gUserSid=CurrentUserSid();
+    gCleanerRoot=ProgramDataNlite();
     gMutex=CreateMutexW(nullptr,TRUE,L"Local\\N-Lite-Single-Instance");
     if(gMutex&&GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(gMutex);return 0;}
     INITCOMMONCONTROLSEX ic{sizeof(ic),ICC_STANDARD_CLASSES};InitCommonControlsEx(&ic);
