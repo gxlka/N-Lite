@@ -129,6 +129,14 @@ inline bool CleanerPolicyMatches(const std::wstring& value, const wchar_t* first
         CleanerPolicyEquals(value, third);
 }
 
+inline bool CleanerExecutablePathMatches(const std::wstring& actual,
+                                         const std::wstring& expected) {
+    std::wstring path = actual;
+    if (path.size() >= 2 && path.front() == L'"' && path.back() == L'"')
+        path = path.substr(1, path.size() - 2);
+    return CleanerPolicyEquals(path, expected.c_str());
+}
+
 inline bool HasExpectedCleanerTaskSecurityDescriptor(const std::wstring& descriptor) {
     if (descriptor.compare(0, 2, L"O:") != 0) return false;
     size_t ownerEnd = descriptor.find(L"G:", 2);

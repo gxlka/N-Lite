@@ -178,6 +178,11 @@ int main() {
     Check(HasExpectedCleanerTaskSecurityDescriptor(
         L"O:BAG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)(A;;FR;;;SY)"),
         "task_acl_accepts_actual_windows_scheduler_descriptor");
+    Check(CleanerExecutablePathMatches(L"\"C:\\ProgramData\\N-Lite\\N-Lite-Cleaner.exe\"",
+        L"C:\\ProgramData\\N-Lite\\N-Lite-Cleaner.exe") &&
+        !CleanerExecutablePathMatches(L"\"C:\\ProgramData\\N-Lite\\N-Lite-Cleaner.exe\" --other",
+        L"C:\\ProgramData\\N-Lite\\N-Lite-Cleaner.exe"),
+        "task_action_accepts_scheduler_quoted_path_without_allowing_extra_arguments");
     SystemMemoryListInfo memoryLists{};
     memoryLists.standby[0] = 2;
     memoryLists.standby[7] = 3;

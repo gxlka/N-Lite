@@ -639,7 +639,7 @@ static bool CleanerTaskRegistered() {
     if(SUCCEEDED(hr))hr=exec->get_Arguments(&arguments);
     const std::wstring expectedPath=gCleanerRoot+L"\\N-Lite-Cleaner.exe";
     const std::wstring expectedArguments=L"--run "+gUserSid;
-    if(SUCCEEDED(hr)&&(!actionPath||_wcsicmp(actionPath,expectedPath.c_str())!=0||
+    if(SUCCEEDED(hr)&&(!actionPath||!CleanerExecutablePathMatches(actionPath,expectedPath)||
         !arguments||expectedArguments!=arguments))hr=E_ACCESSDENIED;
     if(SUCCEEDED(hr))hr=task->GetSecurityDescriptor(
         OWNER_SECURITY_INFORMATION|GROUP_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&security);
