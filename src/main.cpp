@@ -14,6 +14,7 @@
 #include <sddl.h>
 #include <winhttp.h>
 #include <wincrypt.h>
+#include <taskschd.h>
 #include <thread>
 #include <atomic>
 #include <array>
@@ -52,7 +53,7 @@ static constexpr WORD IDI_NLITE = 101;
 #pragma comment(lib, "comdlg32.lib")
 
 #ifndef NLITE_VERSION
-#define NLITE_VERSION "0.2.5"
+#define NLITE_VERSION "0.2.13"
 #endif
 #ifndef NLITE_CLEANER_VERSION
 #define NLITE_CLEANER_VERSION "3"
@@ -127,7 +128,7 @@ static std::wstring gSearch, gStatus = L"Ready";
 static bool gSearchFocus = false, gTrayAdded = false, gExiting = false, gAutoPurge = kAutoCleanDefaultEnabled, gAutoStart = false;
 static bool gShowAllProcesses = kShowAllProcessesDefault;
 static bool gThresholdFocus=false, gThresholdReplaceOnType=false, gTimerEnabled=false, gTimerActive=false, gAutoTaskReady=false, gHasProcessOverrides=false;
-static bool gDarkTheme=true, gCleanerInstalled=false, gCleanerCurrentVersion=false;
+static bool gDarkTheme=true, gCleanerInstalled=false, gCleanerCurrentVersion=false, gCleanerTaskUsable=false;
 static bool gCleanerSetupForAuto=false, gCleanerSetupForManual=false;
 static bool gCleanerSetupBlocked=false;
 static std::wstring gThresholdEdit;
@@ -548,7 +549,7 @@ static std::wstring CurrentUserSid() {
 }
 static bool RunSchtasks(const std::vector<std::wstring>& arguments);
 static bool WriteCleanerSettings() {
-    if (!gCleanerInstalled) return true;
+    if (!gCleanerTaskUsable) return true;
     CleanerSettings settings;
     settings.enabled = gAutoPurge;
     settings.thresholdMb = gThresholdMB;
@@ -576,6 +577,94 @@ static bool ReadCleanerHelperVersion(std::wstring& version) {
     for (wchar_t ch : version) if (ch < L'0' || ch > L'9') return false;
     return true;
 }
+template <typename T>
+static void ReleaseCleanerCom(T*& value) {
+    if(value){value->Release();value=nullptr;}
+}
+static bool IsCleanerSystemPrincipal(const std::wstring& principal) {
+    if(_wcsicmp(principal.c_str(),L"SYSTEM")==0||
+       _wcsicmp(principal.c_str(),L"NT AUTHORITY\\SYSTEM")==0||
+       _wcsicmp(principal.c_str(),L"S-1-5-18")==0)return true;
+    PSID sid=nullptr;
+    if(ConvertStringSidToSidW(principal.c_str(),&sid)){
+        const bool isSystem=IsWellKnownSid(sid,WinLocalSystemSid)!=FALSE;
+        LocalFree(sid);return isSystem;
+    }
+    DWORD sidBytes=0,domainChars=0;SID_NAME_USE use{};
+    LookupAccountNameW(nullptr,principal.c_str(),nullptr,&sidBytes,nullptr,&domainChars,&use);
+    if(!sidBytes)return false;
+    std::vector<BYTE> sidBuffer(sidBytes);std::vector<wchar_t> domain((std::max)(domainChars,static_cast<DWORD>(1)));
+    return LookupAccountNameW(nullptr,principal.c_str(),sidBuffer.data(),&sidBytes,
+        domain.data(),&domainChars,&use)&&IsWellKnownSid(sidBuffer.data(),WinLocalSystemSid);
+}
+static bool CleanerTaskRegistered() {
+    if(gUserSid.empty()||gCleanerRoot.empty())return false;
+    const HRESULT init=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+    const bool uninitialize=SUCCEEDED(init);
+    if(FAILED(init)&&init!=RPC_E_CHANGED_MODE)return false;
+
+    bool usable=false;
+    ITaskService* service=nullptr;ITaskFolder* folder=nullptr;IRegisteredTask* task=nullptr;
+    ITaskDefinition* definition=nullptr;IPrincipal* principal=nullptr;
+    IActionCollection* actions=nullptr;IAction* action=nullptr;IExecAction* exec=nullptr;
+    BSTR folderPath=SysAllocString(L"\\"),taskName=SysAllocString((L"N-Lite Cleaner "+gUserSid).c_str());
+    VARIANT empty;VariantInit(&empty);
+    HRESULT hr=CoCreateInstance(CLSID_TaskScheduler,nullptr,CLSCTX_INPROC_SERVER,
+        IID_ITaskService,reinterpret_cast<void**>(&service));
+    if(SUCCEEDED(hr))hr=service->Connect(empty,empty,empty,empty);
+    if(SUCCEEDED(hr)&&folderPath)hr=service->GetFolder(folderPath,&folder);
+    else if(SUCCEEDED(hr))hr=E_OUTOFMEMORY;
+    if(SUCCEEDED(hr)&&taskName)hr=folder->GetTask(taskName,&task);
+    else if(SUCCEEDED(hr))hr=E_OUTOFMEMORY;
+
+    VARIANT_BOOL enabled=VARIANT_FALSE;BSTR security=nullptr;
+    if(SUCCEEDED(hr))hr=task->get_Enabled(&enabled);
+    if(SUCCEEDED(hr)&&enabled!=VARIANT_TRUE)hr=E_ACCESSDENIED;
+    if(SUCCEEDED(hr))hr=task->get_Definition(&definition);
+    if(SUCCEEDED(hr))hr=definition->get_Principal(&principal);
+    BSTR principalName=nullptr;TASK_LOGON_TYPE logonType=TASK_LOGON_NONE;
+    if(SUCCEEDED(hr))hr=principal->get_UserId(&principalName);
+    if(SUCCEEDED(hr))hr=principal->get_LogonType(&logonType);
+    // LocalSystem is already privileged; Task Scheduler ignores RunLevel for this account.
+    if(SUCCEEDED(hr)&&(!principalName||!IsCleanerSystemPrincipal(principalName)||
+        logonType!=TASK_LOGON_SERVICE_ACCOUNT))hr=E_ACCESSDENIED;
+    if(SUCCEEDED(hr))hr=definition->get_Actions(&actions);
+    LONG actionCount=0;
+    if(SUCCEEDED(hr))hr=actions->get_Count(&actionCount);
+    if(SUCCEEDED(hr)&&actionCount!=1)hr=E_ACCESSDENIED;
+    if(SUCCEEDED(hr))hr=actions->get_Item(1,&action);
+    if(SUCCEEDED(hr))hr=action->QueryInterface(IID_IExecAction,reinterpret_cast<void**>(&exec));
+    BSTR actionPath=nullptr,arguments=nullptr;
+    if(SUCCEEDED(hr))hr=exec->get_Path(&actionPath);
+    if(SUCCEEDED(hr))hr=exec->get_Arguments(&arguments);
+    const std::wstring expectedPath=gCleanerRoot+L"\\N-Lite-Cleaner.exe";
+    const std::wstring expectedArguments=L"--run "+gUserSid;
+    if(SUCCEEDED(hr)&&(!actionPath||_wcsicmp(actionPath,expectedPath.c_str())!=0||
+        !arguments||expectedArguments!=arguments))hr=E_ACCESSDENIED;
+    if(SUCCEEDED(hr))hr=task->GetSecurityDescriptor(
+        OWNER_SECURITY_INFORMATION|GROUP_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&security);
+    if(SUCCEEDED(hr)&&(!security||!HasExpectedCleanerTaskSecurityDescriptor(security)))hr=E_ACCESSDENIED;
+    usable=SUCCEEDED(hr);
+
+    if(actionPath)SysFreeString(actionPath);if(arguments)SysFreeString(arguments);
+    if(principalName)SysFreeString(principalName);if(security)SysFreeString(security);
+    if(folderPath)SysFreeString(folderPath);if(taskName)SysFreeString(taskName);
+    ReleaseCleanerCom(exec);ReleaseCleanerCom(action);ReleaseCleanerCom(actions);
+    ReleaseCleanerCom(principal);ReleaseCleanerCom(definition);ReleaseCleanerCom(task);
+    ReleaseCleanerCom(folder);ReleaseCleanerCom(service);
+    if(uninitialize)CoUninitialize();
+    return usable;
+}
+static bool CleanerHelperPresent() {
+    if(gCleanerRoot.empty())return false;
+    const DWORD attrs=GetFileAttributesW((gCleanerRoot+L"\\N-Lite-Cleaner.exe").c_str());
+    return attrs!=INVALID_FILE_ATTRIBUTES&&!(attrs&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY));
+}
+static bool CleanerSettingsReady() {
+    if(gCleanerRoot.empty()||gUserSid.empty())return false;
+    std::wstring settingsText;CleanerSettings settings;
+    return ReadCleanerText(CleanerSettingsFile(),settingsText)&&ParseCleanerSettings(settingsText,settings);
+}
 static bool CleanerRegistrationValid() {
     if (gCleanerRoot.empty() || gUserSid.empty()) return false;
     const auto isRegularFile = [](const std::wstring& path) {
@@ -599,7 +688,9 @@ static void RefreshCleanerSetupState() {
         registrationValid, registrationValid && CleanerHelperCurrent());
     gCleanerInstalled = action != CleanerSetupAction::Install;
     gCleanerCurrentVersion = action == CleanerSetupAction::Ready;
-    gAutoTaskReady = gCleanerInstalled;
+    gCleanerTaskUsable = CanUseRegisteredCleanerTask(CleanerTaskRegistered(),
+        CleanerHelperPresent(),CleanerSettingsReady());
+    gAutoTaskReady = gCleanerTaskUsable;
 }
 static DWORD CurrentCleanerVersionNumber() {
     wchar_t* end = nullptr;
@@ -641,7 +732,7 @@ static void LoadSettings() {
     RegReadDword(L"CleanerSetupBlockedVersion", failedCleanerVersion);
     gCleanerSetupBlocked = ShouldSuppressCleanerUpdateRetry(gCleanerInstalled,
         gCleanerCurrentVersion, CurrentCleanerVersionNumber(), failedCleanerVersion);
-    if (gCleanerInstalled) {
+    if (gCleanerTaskUsable) {
         std::wstring text; CleanerSettings settings;
         if (ReadCleanerText(CleanerSettingsFile(), text) && ParseCleanerSettings(text, settings)) {
             gCleanerRequestId = settings.manualRequestId;
@@ -831,7 +922,7 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
         BlockCleanerSetup();
         gCleanerSetupForAuto=false;gCleanerSetupForManual=false;
         gStatus = L"Ready";
-        if (forAuto && !gCleanerInstalled) DisableAutoCleanAfterSetupFailure(!forManual);
+        if (forAuto && !gCleanerTaskUsable) DisableAutoCleanAfterSetupFailure(!forManual);
         if (forManual) ShowCleanerNotification(L"Clean failed: Windows account unavailable", CleanerNoticeKind::Failure);
         return false;
     }
@@ -841,15 +932,15 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
         BlockCleanerSetup();
         gCleanerSetupForAuto=false;gCleanerSetupForManual=false;
         gStatus = L"Ready";
-        if (gCleanerInstalled && (forManual || gAutoPurge)) {
+        if (gCleanerTaskUsable && (forManual || gAutoPurge)) {
             const bool started = RequestCleanerTaskRun(forManual);
             if (started) gStatus = forManual ?
                 L"Using the existing cleaner; the update file is missing." :
                 L"Auto Clean is using the existing cleaner; the update file is missing.";
             return started;
         }
-        if (forAuto && !gCleanerInstalled) DisableAutoCleanAfterSetupFailure(!forManual);
-        if (forManual && !gCleanerInstalled) ShowCleanerNotification(L"Clean failed: cleaner could not start", CleanerNoticeKind::Failure);
+        if (forAuto && !gCleanerTaskUsable) DisableAutoCleanAfterSetupFailure(!forManual);
+        if (forManual && !gCleanerTaskUsable) ShowCleanerNotification(L"Clean failed: cleaner could not start", CleanerNoticeKind::Failure);
         return false;
     }
     std::wstring parameters = L"--install " + gUserSid;
@@ -868,15 +959,15 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
         gCleanerSetupForAuto = false;
         gCleanerSetupForManual = false;
         gStatus = L"Ready";
-        if (gCleanerInstalled && (forManual || gAutoPurge)) {
+        if (gCleanerTaskUsable && (forManual || gAutoPurge)) {
             const bool started = RequestCleanerTaskRun(forManual);
             if (started) gStatus = forManual ?
                 L"Using the existing cleaner; the update was skipped." :
                 L"Auto Clean is using the existing cleaner; the update was skipped.";
             return started;
         }
-        if (forAuto && !gCleanerInstalled) DisableAutoCleanAfterSetupFailure(!forManual);
-        if (forManual && !gCleanerInstalled) ShowCleanerNotification(
+        if (forAuto && !gCleanerTaskUsable) DisableAutoCleanAfterSetupFailure(!forManual);
+        if (forManual && !gCleanerTaskUsable) ShowCleanerNotification(
             error == ERROR_CANCELLED ? L"Clean failed: request was cancelled" : L"Clean failed: cleaner could not start",
             CleanerNoticeKind::Failure);
         return false;
@@ -886,8 +977,10 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
     return true;
 }
 static bool RequestCleanerTaskRun(bool manual) {
-    if (!CanUseRegisteredCleanerTask(gCleanerInstalled, gCleanerCurrentVersion, gCleanerSetupBlocked))
+    if (!gCleanerTaskUsable) {
+        if(!ShouldPromptCleanerSetup(false,gCleanerSetupBlocked,manual))return false;
         return StartCleanerSetup(gAutoPurge, manual);
+    }
     if (manual && !gManualCleanerPending) {
         if (gCleanerRequestId == (std::numeric_limits<uint64_t>::max)()) {
             gStatus = L"Ready";
@@ -924,11 +1017,11 @@ static void PollCleanerSetup() {
     const bool forAuto = gCleanerSetupForAuto, forManual = gCleanerSetupForManual;
     gCleanerSetupForAuto = false; gCleanerSetupForManual = false;
     RefreshCleanerSetupState();
-    RegWriteDword(L"AutoTaskReady", gCleanerInstalled ? 1 : 0);
+    RegWriteDword(L"AutoTaskReady", gCleanerTaskUsable ? 1 : 0);
     if (!gCleanerInstalled || !gCleanerCurrentVersion) {
         BlockCleanerSetup();
         bool fallbackStarted = false;
-        if (gCleanerInstalled) {
+        if (gCleanerTaskUsable) {
             SaveSettings();
             if (forManual) fallbackStarted = RequestCleanerTaskRun(true);
             else if (gAutoPurge) fallbackStarted = RequestCleanerTaskRun(false);
@@ -946,7 +1039,7 @@ static void PollCleanerSetup() {
     else gStatus = L"Ready";
 }
 static void PollCleanerStatus() {
-    if (!gCleanerInstalled) return;
+    if (!gCleanerTaskUsable) return;
     CleanerStatus latest;
     if (!ReadCleanerStatus(latest)) return;
     gCleanerStatus = latest;
@@ -1004,7 +1097,7 @@ static void DoPurge() {
     }
     gManualStandbyBefore = static_cast<uint64_t>(gMetrics.standby);
     gManualStandbyBeforeKnown = gMetrics.standbyKnown;
-    if (!gCleanerInstalled) {
+    if (!gCleanerTaskUsable) {
         StartCleanerSetup(false, true);
         return;
     }
@@ -1662,9 +1755,9 @@ static void SaveToggleAuto() {
     if(gAutoPurge){gAutoPurge=kAutoCleanDefaultEnabled;SaveSettings();gStatus=L"Ready";return;}
     gAutoPurge=true;
     SaveSettings();
-    if(CanUseRegisteredCleanerTask(gCleanerInstalled,gCleanerCurrentVersion,gCleanerSetupBlocked))
+    if(gCleanerTaskUsable)
         RequestCleanerTaskRun(false);
-    else if(ShouldBlockCleanerSetupRetry(gCleanerSetupBlocked,false))
+    else if(!ShouldPromptCleanerSetup(false,gCleanerSetupBlocked,false))
         DisableAutoCleanAfterSetupFailure(true);
     else StartCleanerSetup(true,false);
 }
@@ -1785,7 +1878,11 @@ static LRESULT CALLBACK WndProc(HWND h,UINT msg,WPARAM wp,LPARAM lp) {
         gFontTitle=CreateFontW(-27,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
         AddTray(); SetTimer(h,TIMER_REFRESH,2200,nullptr); SetTimer(h,TIMER_UPDATE_CHECK,6u*60u*60u*1000u,nullptr); UpdateMetrics(); RefreshProcesses();
         ApplyWindowChromeTheme(h);
-        if(gAutoPurge&&!gCleanerCurrentVersion&&!gCleanerSetupBlocked&&!StartCleanerSetup(true,false)&&gCleanerInstalled)RequestCleanerTaskRun(false);
+        if(gAutoPurge){
+            if(ShouldPromptCleanerSetup(gCleanerTaskUsable,gCleanerSetupBlocked,false))
+                StartCleanerSetup(true,false);
+            else if(!gCleanerTaskUsable)DisableAutoCleanAfterSetupFailure(false);
+        }
         CheckForUpdatesAsync();
         return 0;
     }

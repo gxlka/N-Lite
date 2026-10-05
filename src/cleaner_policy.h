@@ -27,9 +27,13 @@ inline CleanerSetupAction DecideCleanerSetup(bool registrationMarkerValid, bool 
     return helperVersionCurrent ? CleanerSetupAction::Ready : CleanerSetupAction::Update;
 }
 
-inline bool CanUseRegisteredCleanerTask(bool helperInstalled, bool helperCurrent,
-                                        bool setupBlocked) {
-    return helperInstalled && (helperCurrent || setupBlocked);
+inline bool CanUseRegisteredCleanerTask(bool taskRegistered, bool helperPresent,
+                                        bool settingsReady) {
+    return taskRegistered && helperPresent && settingsReady;
+}
+
+inline bool ShouldPromptCleanerSetup(bool taskUsable, bool setupBlocked, bool manualRequest) {
+    return !taskUsable && (!setupBlocked || manualRequest);
 }
 
 inline bool ShouldSuppressCleanerUpdateRetry(bool helperInstalled, bool helperCurrent,
