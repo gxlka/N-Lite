@@ -117,6 +117,11 @@ int main() {
         !StandbyCleanSucceeded(0, 16 * 1024 * 1024, 16 * 1024 * 1024, 4096) &&
         !StandbyCleanSucceeded(static_cast<int32_t>(0xC0000061u), 16 * 1024 * 1024, 2 * 1024 * 1024, 4096),
         "standby_clean_succeeds_only_when_windows_succeeds_and_size_drops");
+    Check(AutoCleanNeedsRetry(0, true, 16 * 1024 * 1024, 16 * 1024 * 1024, 4096) &&
+        AutoCleanNeedsRetry(static_cast<int32_t>(0xC0000061u), true, 16 * 1024 * 1024, 2 * 1024 * 1024, 4096) &&
+        AutoCleanNeedsRetry(0, false, 16 * 1024 * 1024, 0, 4096) &&
+        !AutoCleanNeedsRetry(0, true, 16 * 1024 * 1024, 2 * 1024 * 1024, 4096),
+        "automatic_cleaner_retries_until_a_standby_reduction_is_verified");
     const std::vector<uint8_t> approvalEnabled{2, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     const std::vector<uint8_t> approvalDisabled{3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     Check(ParseStartupApprovalState(approvalEnabled) == StartupApprovalState::Enabled &&
@@ -134,6 +139,14 @@ int main() {
     Check(IsStartupTaskTriggerType(8) && IsStartupTaskTriggerType(9) &&
         !IsStartupTaskTriggerType(2),
         "only_boot_and_logon_tasks_count_as_startup");
+    Check(StartupTaskCanBeToggled(true, true, true, false, true),
+        "disabled_startup_task_keeps_an_enable_control");
+    Check(!StartupTaskCanBeToggled(false, true, true, false, true) &&
+        !StartupTaskCanBeToggled(true, false, true, false, true) &&
+        !StartupTaskCanBeToggled(true, true, false, false, true) &&
+        !StartupTaskCanBeToggled(true, true, true, true, true) &&
+        !StartupTaskCanBeToggled(true, true, true, false, false),
+        "startup_task_controls_stay_limited_to_owned_startup_tasks");
     Check(IsProtectedStartupTaskPath(L"\\Microsoft\\Windows\\UpdateOrchestrator") &&
         !IsProtectedStartupTaskPath(L"\\Vendor\\Updater") &&
         StartupEntryCanBeDeleted(true, false) && !StartupEntryCanBeDeleted(false, false) &&
@@ -259,11 +272,11 @@ int main() {
     settings.intervalSeconds = 60;
     const uint64_t thresholdBytes = uint64_t{64} * 1024 * 1024;
     Check(ShouldRunAutoClean(settings, thresholdBytes, 120000, 60000, true),
-        "auto_clean_requires_threshold_armed_and_elapsed_interval");
+        "auto_clean_requires_enabled_threshold_and_elapsed_interval");
     Check(!ShouldRunAutoClean(settings, thresholdBytes - 1, 120000, 60000, true),
         "below_threshold_does_not_auto_clean");
     Check(!ShouldRunAutoClean(settings, thresholdBytes, 120000, 60000, false),
-        "unarmed_auto_clean_does_not_repeat");
+        "auto_clean_waits_for_threshold_to_rearm_after_a_verified_clean");
     Check(!ShouldRunAutoClean(settings, thresholdBytes, 119999, 60000, true),
         "auto_clean_waits_for_interval");
     Check(ManualRequestCompleted(7, 7) && !ManualRequestCompleted(8, 7) && !ManualRequestCompleted(0, 7),

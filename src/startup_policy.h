@@ -59,6 +59,13 @@ inline bool IsStartupTaskTriggerType(int type) {
     return type == 8 || type == 9;
 }
 
+inline bool StartupTaskCanBeToggled(bool hasStartupTrigger, bool onlyStartupTriggers,
+                                    bool currentUserOwned, bool protectedTask,
+                                    bool canRestoreDisabledTrigger) {
+    return hasStartupTrigger && onlyStartupTriggers && currentUserOwned && !protectedTask &&
+        canRestoreDisabledTrigger;
+}
+
 inline bool IsProtectedStartupTaskPath(const std::wstring& path) {
     constexpr wchar_t prefix[] = L"\\Microsoft";
     constexpr size_t prefixLength = sizeof(prefix) / sizeof(prefix[0]) - 1;

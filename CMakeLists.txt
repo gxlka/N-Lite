@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(NLite LANGUAGES CXX RC)
 
-set(NLITE_VERSION "0.2.14" CACHE STRING "N-Lite application version")
-set(NLITE_CLEANER_VERSION "4" CACHE STRING "Protected cleaner helper version")
+set(NLITE_VERSION "0.2.15" CACHE STRING "N-Lite application version")
+set(NLITE_CLEANER_VERSION "5" CACHE STRING "Protected cleaner helper version")
 
 add_executable(N-Lite WIN32 src/main.cpp src/startup_manager.cpp)
 set(NLITE_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/src/app.ico")
@@ -56,4 +56,6 @@ if(BUILD_TESTING)
   add_dependencies(N-Lite-cleaner-integration N-Lite-Cleaner)
   add_test(NAME N-Lite-cleaner-integration COMMAND N-Lite-cleaner-integration)
   set_tests_properties(N-Lite-cleaner-integration PROPERTIES TIMEOUT 240)
+  add_test(NAME N-Lite-startup-ui-integration COMMAND N-Lite-cleaner-integration --startup-ui-test)
+  set_tests_properties(N-Lite-startup-ui-integration PROPERTIES TIMEOUT 60)
 endif()
