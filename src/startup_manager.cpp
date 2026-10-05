@@ -592,12 +592,12 @@ bool AddStartupApplication(HWND owner,std::wstring& addedName) {
     dialog.lpstrFile=selected.data();dialog.nMaxFile=static_cast<DWORD>(selected.size());dialog.lpstrTitle=L"Choose an app to start with Windows";
     dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR|OFN_HIDEREADONLY;
 #ifdef NLITE_STARTUP_TESTING
-    const BOOL selected = gStartupFilePickerForTesting ?
+    const BOOL pickerSucceeded = gStartupFilePickerForTesting ?
         gStartupFilePickerForTesting(&dialog) : GetOpenFileNameW(&dialog);
 #else
-    const BOOL selected = GetOpenFileNameW(&dialog);
+    const BOOL pickerSucceeded = GetOpenFileNameW(&dialog);
 #endif
-    if(!selected)return false;
+    if(!pickerSucceeded)return false;
     const std::wstring path=selected.data();std::vector<std::wstring> names;
     for(const auto& item:EnumerateStartupItems())if(item.kind==StartupKind::UserRun)names.push_back(item.name);
     addedName=StartupValueNameForPath(path,names);const std::wstring command=QuoteArgument(path);
