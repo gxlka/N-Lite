@@ -92,6 +92,16 @@ int wmain(int argc, wchar_t** argv) {
         DeleteFileW((gCleanerRoot + L"\\helper-version.txt").c_str());
         ok &= Check(Launch(L"\"" + gExePath + L"\" --child", restricted) == 0, "missing version marker still reuses existing task without elevation");
     }
+    CleanerStatus before; ReadCleanerStatus(before);
+    const ULONGLONG deadline = GetTickCount64() + 75000; bool scheduled = false;
+    while (ok && GetTickCount64() < deadline) {
+        CleanerStatus next;
+        if (ReadCleanerStatus(next) && next.standbyValid && next.standbyTick > before.standbyTick) {
+            scheduled = true; break;
+        }
+        Sleep(100);
+    }
+    ok &= Check(scheduled, "minute trigger runs helper with all app sessions closed");
     if (restricted) CloseHandle(restricted); if (original) CloseHandle(original);
     Launch(L"\"" + helper + L"\" --uninstall " + gUserSid);
     return ok ? 0 : 1;

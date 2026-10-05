@@ -314,8 +314,10 @@ static bool InstallTask(const std::wstring& helperPath, const std::wstring& sid)
         if (!HasExpectedCleanerTaskSecurityDescriptor(descriptor)) hr = E_ACCESSDENIED;
     }
     if (actual) {
+        if (FAILED(hr)) {
         const std::wstring value(actual); const std::string message(value.begin(), value.end()); DWORD written = 0;
         WriteFile(GetStdHandle(STD_ERROR_HANDLE), message.data(), static_cast<DWORD>(message.size()), &written, nullptr);
+        }
         SysFreeString(actual);
     }
     if (registered) registered->Release();
