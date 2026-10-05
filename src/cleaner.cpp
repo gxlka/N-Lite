@@ -17,7 +17,7 @@
 #include "cleaner_policy.h"
 
 #ifndef NLITE_CLEANER_VERSION
-#define NLITE_CLEANER_VERSION "3"
+#define NLITE_CLEANER_VERSION "4"
 #endif
 #define NLITE_WIDEN2(x) L##x
 #define NLITE_WIDEN(x) NLITE_WIDEN2(x)

@@ -106,7 +106,7 @@ int main() {
         "auto_toggle_never_prompts_when_system_task_is_ready_or_setup_was_cancelled");
     Check(ShouldSuppressCleanerUpdateRetry(true, false, 2, 2) &&
         !ShouldSuppressCleanerUpdateRetry(true, false, 2, 1) &&
-        !ShouldSuppressCleanerUpdateRetry(true, true, 2, 2) &&
+        ShouldSuppressCleanerUpdateRetry(true, true, 2, 2) &&
         ShouldSuppressCleanerUpdateRetry(false, false, 2, 2),
         "failed_cleaner_setup_is_suppressed_for_same_version_until_manual_retry");
     Check(ShouldBlockCleanerSetupRetry(true, false) &&

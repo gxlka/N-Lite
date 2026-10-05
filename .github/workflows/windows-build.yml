@@ -23,7 +23,7 @@ jobs:
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
             $version = $env:GITHUB_REF_NAME.TrimStart('v')
           } else {
-            $version = '0.2.13'
+            $version = '0.2.14'
           }
           "NLITE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
@@ -34,7 +34,7 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Run logic tests
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: ctest --test-dir build -C Release --verbose --output-on-failure
 
       - name: Stage executables
         shell: pwsh
@@ -264,6 +264,21 @@ jobs:
           tag_name: v0.2.13
           target_commitish: ${{ github.sha }}
           body_path: releases/v0.2.13.md
+          generate_release_notes: false
+          files: |
+            dist/N-Lite.exe
+            dist/N-Lite-Cleaner.exe
+            dist/N-Lite-Setup-x64.exe
+
+      - name: Publish v0.2.14 release
+        if: github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[publish-release:0.2.14]')
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v0.2.14
+          target_commitish: ${{ github.sha }}
+          body_path: releases/v0.2.14.md
           generate_release_notes: false
           files: |
             dist/N-Lite.exe
