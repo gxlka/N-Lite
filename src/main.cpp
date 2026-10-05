@@ -53,10 +53,10 @@ static constexpr WORD IDI_NLITE = 101;
 #pragma comment(lib, "comdlg32.lib")
 
 #ifndef NLITE_VERSION
-#define NLITE_VERSION "0.2.13"
+#define NLITE_VERSION "0.2.14"
 #endif
 #ifndef NLITE_CLEANER_VERSION
-#define NLITE_CLEANER_VERSION "3"
+#define NLITE_CLEANER_VERSION "4"
 #endif
 #define NLITE_WIDEN2(x) L##x
 #define NLITE_WIDEN(x) NLITE_WIDEN2(x)

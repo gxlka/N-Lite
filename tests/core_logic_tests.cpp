@@ -169,9 +169,9 @@ int main() {
     Check(!HasExpectedCleanerTaskSecurityDescriptor(
         L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;CI;GRGX;;;BU)"),
         "task_acl_rejects_inheritable_task_access");
-    Check(!HasExpectedCleanerTaskSecurityDescriptor(
+    Check(HasExpectedCleanerTaskSecurityDescriptor(
         L"O:BAG:BAD:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)"),
-        "task_acl_rejects_auto_inherited_dacl_flags");
+        "task_acl_accepts_scheduler_auto_inherited_control_flag_with_safe_aces");
 
     Check(ShouldSuppressCleanerUpdateRetry(true, true, 4, 4),
         "failed_task_repair_stays_blocked_even_with_current_version_marker");

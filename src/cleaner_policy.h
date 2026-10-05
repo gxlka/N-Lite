@@ -140,9 +140,13 @@ inline bool HasExpectedCleanerTaskSecurityDescriptor(const std::wstring& descrip
         descriptor.substr(2, ownerEnd - 2), L"BA", L"S-1-5-32-544")) return false;
 
     const size_t dacl = descriptor.find(L"D:");
-    if (dacl == std::wstring::npos || dacl + 3 >= descriptor.size() ||
-        (descriptor[dacl + 2] != L'(' &&
-         (descriptor[dacl + 2] != L'P' || descriptor[dacl + 3] != L'('))) return false;
+    if (dacl == std::wstring::npos) return false;
+    const size_t firstAce = descriptor.find(L'(', dacl + 2);
+    if (firstAce == std::wstring::npos) return false;
+    const std::wstring controls = descriptor.substr(dacl + 2, firstAce - dacl - 2);
+    // Scheduler normalizes DACL control flags independently of the effective ACE grants.
+    if (!CleanerPolicyMatches(controls, L"", L"P", L"PAI") &&
+        !CleanerPolicyEquals(controls, L"AI")) return false;
     size_t daclEnd = descriptor.find(L"S:", dacl + 2);
     if (daclEnd == std::wstring::npos) daclEnd = descriptor.size();
 
