@@ -72,6 +72,25 @@ static bool WaitStatus(bool manual, uint64_t previousTick) {
     }
     return false;
 }
+static bool WaitForAutoCleanReady(uint64_t previousTick) {
+    const ULONGLONG deadline = GetTickCount64() + 30000;
+    const uint64_t threshold = static_cast<uint64_t>(gThresholdMB) * 1024u * 1024u;
+    ULONGLONG lastDispatch = 0;
+    while (GetTickCount64() < deadline) {
+        CleanerStatus status;
+        if (ReadCleanerStatus(status) && status.standbyValid && status.standbyTick > previousTick) {
+            if (status.standbyBytes >= threshold || status.autoArmed) return true;
+            previousTick = status.standbyTick;
+        }
+        const ULONGLONG now = GetTickCount64();
+        if (now - lastDispatch >= 1000) {
+            RequestCleanerTaskRun(false);
+            lastDispatch = now;
+        }
+        Sleep(100);
+    }
+    return false;
+}
 static int StartupUiTest() {
     const std::wstring valueName = L"N-Lite Startup UI Test " +
         std::to_wstring(GetCurrentProcessId()) + L" " + std::to_wstring(GetTickCount64());
@@ -134,7 +153,7 @@ static int StartupUiTest() {
         WndProc(controller, WM_TIMER, TIMER_REFRESH, 0);
         ok &= Check(trayBalloonCount == 1 && trayBalloonTitle == L"N-Lite" &&
             trayBalloonText.find(L"Auto clean succeeded:") == 0 &&
-            trayBalloonText.find(L"64 MB") != std::wstring::npos,
+            trayBalloonText.find(L"64.0 MB") != std::wstring::npos,
             "hidden tray reports the helper's verified auto-clean before/after result");
 
         gCleanerStatus = CleanerStatus{};
@@ -172,7 +191,7 @@ static int StartupUiTest() {
         gTrayAdded = false;
     }
     if (canvas && bitmap && old && old != HGDI_ERROR) {
-        auto paint = [&]() { Paint(canvas, 1240, 830); };
+        auto paint = [&]() { Paint(canvas, 960, 620); };
         auto clickHit = [&](int id) {
             const Hit* hit = nullptr;
             for (auto it = gHits.rbegin(); it != gHits.rend(); ++it) {
@@ -187,10 +206,10 @@ static int StartupUiTest() {
         paint();
         ok &= Check(std::any_of(gHits.begin(), gHits.end(), [](const Hit& hit) { return hit.id == ID_STARTUP_ADD; }) &&
             std::any_of(gHits.begin(), gHits.end(), [](const Hit& hit) { return hit.id == ID_REFRESH; }),
-            "startup add and refresh buttons receive hit targets");
+            "startup add and refresh buttons receive hit targets at the minimum window size");
 
         startupDialogSelection = L"C:\\N-Lite-Test\\" + valueName + L".exe";
-        ok &= Check(clickHit(ID_STARTUP_ADD), "startup add button opens the selected-app flow");
+        ok &= Check(clickHit(ID_STARTUP_ADD), "startup add button opens the selected-app flow at the minimum window size");
         auto testEntry = findTestEntry();
         ok &= Check(testEntry != gStartupEntries.end() && testEntry->enabled &&
             testEntry->canToggle && testEntry->canDelete &&
@@ -280,7 +299,7 @@ static int NonAdminTest() {
     CleanerStatus previous; ReadCleanerStatus(previous);
     SaveToggleAuto();
     ok &= Check(gAutoPurge, "auto clean remains enabled");
-    ok &= Check(WaitStatus(false, previous.standbyTick), "SYSTEM helper produces fresh standby sample");
+    ok &= Check(WaitForAutoCleanReady(previous.standbyTick), "SYSTEM helper produces a fresh, armed standby sample");
     CleanerStatus automatic; ReadCleanerStatus(automatic);
     const uint64_t threshold = static_cast<uint64_t>(gThresholdMB) * 1024u * 1024u;
     ok &= Check(automatic.standbyValid, "SYSTEM helper returned a current standby measurement");

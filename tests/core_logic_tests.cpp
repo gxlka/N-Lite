@@ -122,6 +122,15 @@ int main() {
         AutoCleanNeedsRetry(0, false, 16 * 1024 * 1024, 0, 4096) &&
         !AutoCleanNeedsRetry(0, true, 16 * 1024 * 1024, 2 * 1024 * 1024, 4096),
         "automatic_cleaner_retries_until_a_standby_reduction_is_verified");
+    Check(AutoCleanShouldRemainArmedAfterRun(0, true, 16 * 1024 * 1024,
+            2 * 1024 * 1024, 4096, 4 * 1024 * 1024) &&
+        !AutoCleanShouldRemainArmedAfterRun(0, true, 16 * 1024 * 1024,
+            8 * 1024 * 1024, 4096, 4 * 1024 * 1024) &&
+        AutoCleanShouldRemainArmedAfterRun(0, false, 16 * 1024 * 1024,
+            0, 4096, 4 * 1024 * 1024) &&
+        AutoCleanShouldRemainArmedAfterRun(static_cast<int32_t>(0xC0000061u), true,
+            16 * 1024 * 1024, 2 * 1024 * 1024, 4096, 4 * 1024 * 1024),
+        "automatic_cleaner_rearms_immediately_when_a_verified_purge_falls_below_threshold");
     const std::vector<uint8_t> approvalEnabled{2, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     const std::vector<uint8_t> approvalDisabled{3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     Check(ParseStartupApprovalState(approvalEnabled) == StartupApprovalState::Enabled &&

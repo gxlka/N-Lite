@@ -509,7 +509,8 @@ static bool Run(const std::wstring& sid) {
         changed = true;
     } else if (settings.enabled && standbyValid) {
         const uint64_t now = GetTickCount64();
-        if (standby < static_cast<uint64_t>(settings.thresholdMb) * 1024u * 1024u) {
+        const uint64_t threshold = static_cast<uint64_t>(settings.thresholdMb) * 1024u * 1024u;
+        if (standby < threshold) {
             status.autoArmed = true;
         } else if (ShouldRunAutoClean(settings, standby, now, status.lastAutoTick, status.autoArmed)) {
             const uint64_t before = standby;
@@ -525,8 +526,8 @@ static bool Run(const std::wstring& sid) {
             SYSTEM_INFO system{};
             GetSystemInfo(&system);
             const uint64_t pageSize = system.dwPageSize ? system.dwPageSize : 4096;
-            status.autoArmed = AutoCleanNeedsRetry(
-                static_cast<int32_t>(result), afterValid, before, after, pageSize);
+            status.autoArmed = AutoCleanShouldRemainArmedAfterRun(
+                static_cast<int32_t>(result), afterValid, before, after, pageSize, threshold);
             status.standbyValid = afterValid;
             status.standbyBytes = afterValid ? after : 0;
             status.standbyTick = GetTickCount64();

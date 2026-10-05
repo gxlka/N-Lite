@@ -402,6 +402,13 @@ inline bool AutoCleanNeedsRetry(int32_t status, bool afterValid, uint64_t before
     return !afterValid || !StandbyCleanSucceeded(status, beforeBytes, afterBytes, pageSize);
 }
 
+inline bool AutoCleanShouldRemainArmedAfterRun(int32_t status, bool afterValid,
+                                               uint64_t beforeBytes, uint64_t afterBytes,
+                                               uint64_t pageSize, uint64_t thresholdBytes) {
+    return AutoCleanNeedsRetry(status, afterValid, beforeBytes, afterBytes, pageSize) ||
+        (afterValid && afterBytes < thresholdBytes);
+}
+
 inline bool ManualRequestCompleted(uint64_t requestId, uint64_t completedRequestId) {
     return requestId != 0 && completedRequestId >= requestId;
 }
