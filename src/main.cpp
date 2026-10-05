@@ -929,16 +929,15 @@ static std::wstring PackagedCleanerPath() {
 }
 static bool RequestCleanerTaskRun(bool manual);
 static bool StartCleanerSetup(bool forAuto, bool forManual) {
-    if (ShouldBlockCleanerSetupRetry(gCleanerSetupBlocked, forManual) &&
-        !(gCleanerSetupProcess && WaitForSingleObject(gCleanerSetupProcess, 0) == WAIT_TIMEOUT)) {
-        return false;
-    }
-    gCleanerSetupForAuto = gCleanerSetupForAuto || forAuto;
-    gCleanerSetupForManual = gCleanerSetupForManual || forManual;
     if (gCleanerSetupProcess && WaitForSingleObject(gCleanerSetupProcess, 0) == WAIT_TIMEOUT) {
+        gCleanerSetupForAuto = gCleanerSetupForAuto || forAuto;
+        gCleanerSetupForManual = gCleanerSetupForManual || forManual;
         gStatus = L"Ready";
         return true;
     }
+    if (ShouldBlockCleanerSetupRetry(gCleanerSetupBlocked, forManual)) return false;
+    gCleanerSetupForAuto = gCleanerSetupForAuto || forAuto;
+    gCleanerSetupForManual = gCleanerSetupForManual || forManual;
     if (gCleanerSetupProcess) { CloseHandle(gCleanerSetupProcess); gCleanerSetupProcess = nullptr; }
     if (gUserSid.empty()) {
         BlockCleanerSetup();
