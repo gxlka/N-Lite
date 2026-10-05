@@ -136,6 +136,32 @@ void RemoveTestTask(const std::wstring& path) {
     Release(folder); Release(service);
     if (uninitialize) CoUninitialize();
 }
+
+bool ReadTaskSecurityDescriptor(const std::wstring& path, std::wstring& descriptor) {
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool uninitialize = SUCCEEDED(init);
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) return false;
+    ITaskService* service = nullptr; ITaskFolder* folder = nullptr; IRegisteredTask* task = nullptr;
+    VARIANT empty; VariantInit(&empty);
+    HRESULT hr = CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ITaskService, reinterpret_cast<void**>(&service));
+    if (SUCCEEDED(hr)) hr = service->Connect(empty, empty, empty, empty);
+    const size_t split = path.find_last_of(L'\\');
+    const std::wstring folderName = split == 0 ? L"\\" : path.substr(0, split);
+    const std::wstring name = split == std::wstring::npos ? L"" : path.substr(split + 1);
+    BSTR folderPath = SysAllocString(folderName.c_str()), taskName = SysAllocString(name.c_str());
+    if (SUCCEEDED(hr) && folderPath) hr = service->GetFolder(folderPath, &folder);
+    if (SUCCEEDED(hr) && folder && taskName) hr = folder->GetTask(taskName, &task);
+    BSTR value = nullptr;
+    if (SUCCEEDED(hr)) hr = task->GetSecurityDescriptor(
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &value);
+    if (SUCCEEDED(hr) && value) descriptor.assign(value, SysStringLen(value));
+    if (value) SysFreeString(value);
+    if (folderPath) SysFreeString(folderPath); if (taskName) SysFreeString(taskName);
+    Release(task); Release(folder); Release(service);
+    if (uninitialize) CoUninitialize();
+    return SUCCEEDED(hr) && !descriptor.empty();
+}
 }
 
 int main() {
@@ -232,6 +258,9 @@ int main() {
     const bool taskCreated=CreateDisabledStartupTask(taskName,taskPath);
     ok &= Check(taskCreated,"startup_task_test_creates_disabled_user_owned_task");
     if(taskCreated){
+        std::wstring originalSecurity;
+        ok &= Check(ReadTaskSecurityDescriptor(taskPath,originalSecurity),
+            "disabled_startup_task_security_descriptor_is_readable");
         auto findTask=[&](StartupItem& found){
             const auto items=EnumerateStartupItems();
             const auto it=std::find_if(items.begin(),items.end(),[&](const StartupItem& candidate){
@@ -249,6 +278,9 @@ int main() {
             const bool enabledListed=findTask(enabledTask);
             ok &= Check(enabledListed&&enabledTask.enabled&&enabledTask.canToggle,
                 "startup_task_and_boot_or_logon_trigger_enable_together");
+            std::wstring enabledSecurity;
+            ok &= Check(ReadTaskSecurityDescriptor(taskPath,enabledSecurity)&&enabledSecurity==originalSecurity,
+                "re_enabled_startup_task_preserves_its_security_descriptor");
             if(enabledListed&&enabledTask.canDelete){
                 ok &= Check(DeleteStartupItem(enabledTask),"owned_startup_task_can_be_deleted");
             }else ok &= Check(false,"owned_startup_task_can_be_deleted");

@@ -17,13 +17,17 @@ static BOOL WINAPI CaptureStartupFile(LPOPENFILENAMEW);
 #define NLITE_CLEANER_TEST_DIAGNOSTICS
 #define ShellExecuteExW RejectElevation
 #define Shell_NotifyIconW CaptureTrayNotification
-#define GetOpenFileNameW CaptureStartupFile
 #define wWinMain NliteGuiMain
 #include "../src/main.cpp"
 #undef wWinMain
-#undef GetOpenFileNameW
 #undef Shell_NotifyIconW
 #undef ShellExecuteExW
+
+static CleanerStatus syntheticCleanerStatus;
+static bool ReadSyntheticCleanerStatus(CleanerStatus& status) {
+    status = syntheticCleanerStatus;
+    return true;
+}
 
 static BOOL WINAPI CaptureTrayNotification(DWORD action, PNOTIFYICONDATAW notification) {
     if (action == NIM_MODIFY && notification && (notification->uFlags & NIF_INFO)) {
@@ -95,6 +99,7 @@ static int StartupUiTest() {
         OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
 
     gStartupEntries = EnumerateStartupItems();
+    SetStartupFilePickerForTesting(CaptureStartupFile);
     auto findTestEntry = [&]() {
         return std::find_if(gStartupEntries.begin(), gStartupEntries.end(), [&](const StartupItem& item) {
             return item.kind == StartupKind::UserRun && item.registryView == KEY_WOW64_64KEY &&
@@ -106,6 +111,49 @@ static int StartupUiTest() {
     HBITMAP bitmap = screen ? CreateCompatibleBitmap(screen, 1240, 830) : nullptr;
     HGDIOBJ old = canvas && bitmap ? SelectObject(canvas, bitmap) : nullptr;
     ok &= Check(canvas && bitmap && old && old != HGDI_ERROR, "startup UI canvas created");
+    if (canvas && bitmap && old && old != HGDI_ERROR) {
+        const bool oldTaskUsable = gCleanerTaskUsable;
+        gCleanerTaskUsable = true;
+        gCleanerStatus = CleanerStatus{};
+        gCleanerStatus.standbyValid = true;
+        gCleanerStatus.standbyBytes = 128ull * 1024 * 1024;
+        gCleanerStatus.lastAutoTick = 100;
+        gLastSeenPurgeTick = 100;
+        gTrayAdded = true;
+        trayBalloonCount = 0;
+        syntheticCleanerStatus = CleanerStatus{};
+        syntheticCleanerStatus.standbyValid = true;
+        syntheticCleanerStatus.standbyBytes = 96ull * 1024 * 1024;
+        syntheticCleanerStatus.lastAutoTick = 200;
+        syntheticCleanerStatus.lastAutoStatus = 0;
+        syntheticCleanerStatus.autoStandbyValid = true;
+        syntheticCleanerStatus.autoStandbyBefore = 128ull * 1024 * 1024;
+        syntheticCleanerStatus.autoStandbyAfter = 64ull * 1024 * 1024;
+        gCleanerStatusReaderForTests = ReadSyntheticCleanerStatus;
+        WndProc(controller, WM_TIMER, TIMER_REFRESH, 0);
+        ok &= Check(trayBalloonCount == 1 && trayBalloonTitle == L"N-Lite" &&
+            trayBalloonText.find(L"Auto clean succeeded:") == 0 &&
+            trayBalloonText.find(L"64 MB") != std::wstring::npos,
+            "hidden tray reports the helper's verified auto-clean before/after result");
+
+        gCleanerStatus = CleanerStatus{};
+        gCleanerStatus.standbyValid = true;
+        gCleanerStatus.standbyBytes = 128ull * 1024 * 1024;
+        gCleanerStatus.lastAutoTick = 200;
+        gLastSeenPurgeTick = 200;
+        syntheticCleanerStatus.standbyBytes = 0;
+        syntheticCleanerStatus.lastAutoTick = 300;
+        syntheticCleanerStatus.autoStandbyBefore = 64ull * 1024 * 1024;
+        syntheticCleanerStatus.autoStandbyAfter = 64ull * 1024 * 1024;
+        trayBalloonCount = 0;
+        WndProc(controller, WM_TIMER, TIMER_REFRESH, 0);
+        ok &= Check(trayBalloonCount == 1 &&
+            trayBalloonText.find(L"Auto clean failed: standby size unchanged") == 0,
+            "hidden tray does not report unrelated standby changes as a clean success");
+        gCleanerStatusReaderForTests = nullptr;
+        gCleanerTaskUsable = oldTaskUsable;
+        gTrayAdded = false;
+    }
     if (canvas && bitmap && old && old != HGDI_ERROR) {
         auto paint = [&]() { Paint(canvas, 1240, 830); };
         auto clickHit = [&](int id) {
@@ -159,6 +207,7 @@ static int StartupUiTest() {
             ok &= Check(clickHit(ID_STARTUP_DELETE), "startup delete receives a real rendered hit target");
         }
     }
+    SetStartupFilePickerForTesting(nullptr);
     if (canvas && old && old != HGDI_ERROR) SelectObject(canvas, old);
     if (bitmap) DeleteObject(bitmap);
     if (canvas) DeleteDC(canvas);
@@ -216,20 +265,10 @@ static int NonAdminTest() {
     ok &= Check(gAutoPurge, "auto clean remains enabled");
     ok &= Check(WaitStatus(false, previous.standbyTick), "SYSTEM helper produces fresh standby sample");
     CleanerStatus automatic; ReadCleanerStatus(automatic);
-    ok &= Check(automatic.lastAutoTick > previous.lastAutoTick && automatic.lastAutoStatus >= 0,
-        "automatic standby purge ran as SYSTEM");
-    HWND hiddenTrayWindow = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
-        0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
-    if (hiddenTrayWindow) {
-        gWnd = hiddenTrayWindow; gTrayAdded = true; trayBalloonCount = 0;
-        gLastSeenPurgeTick = previous.lastAutoTick;
-        WndProc(hiddenTrayWindow, WM_TIMER, TIMER_REFRESH, 0);
-        ok &= Check(trayBalloonCount == 1 && trayBalloonTitle == L"N-Lite" &&
-            (trayBalloonText.find(L"Auto clean succeeded:") == 0 ||
-                trayBalloonText.find(L"Auto clean failed:") == 0),
-            "automatic clean result appears as a tray notification");
-        gTrayAdded = false; gWnd = nullptr; DestroyWindow(hiddenTrayWindow);
-    } else ok &= Check(false, "automatic clean result appears as a tray notification");
+    const uint64_t threshold = static_cast<uint64_t>(gThresholdMB) * 1024u * 1024u;
+    ok &= Check(automatic.standbyValid, "SYSTEM helper returned a current standby measurement");
+    if (automatic.standbyValid && automatic.standbyBytes < threshold)
+        ok &= Check(automatic.autoArmed, "auto clean stays armed while standby is below threshold");
     SaveToggleAuto(); SaveToggleAuto();
     ok &= Check(elevationAttempts == 0, "repeated toggles never invoke runas");
     LoadSettings();

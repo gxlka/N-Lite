@@ -518,6 +518,9 @@ static bool Run(const std::wstring& sid) {
             status.lastAutoStatus = static_cast<int32_t>(result);
             uint64_t after = 0;
             const bool afterValid = ReadStandbyBytes(after);
+            status.autoStandbyValid = afterValid;
+            status.autoStandbyBefore = before;
+            status.autoStandbyAfter = afterValid ? after : 0;
             SYSTEM_INFO system{};
             GetSystemInfo(&system);
             const uint64_t pageSize = system.dwPageSize ? system.dwPageSize : 4096;

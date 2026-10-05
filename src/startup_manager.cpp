@@ -15,6 +15,16 @@
 #include "startup_manager.h"
 #include "startup_policy.h"
 
+#ifdef NLITE_STARTUP_TESTING
+namespace {
+StartupFilePickerForTesting gStartupFilePickerForTesting = nullptr;
+}
+
+void SetStartupFilePickerForTesting(StartupFilePickerForTesting picker) {
+    gStartupFilePickerForTesting = picker;
+}
+#endif
+
 namespace {
 const wchar_t* RunSubkey(StartupKind kind) {
     return kind==StartupKind::UserRun||kind==StartupKind::MachineRun?
@@ -581,7 +591,13 @@ bool AddStartupApplication(HWND owner,std::wstring& addedName) {
     OPENFILENAMEW dialog{};dialog.lStructSize=sizeof(dialog);dialog.hwndOwner=owner;dialog.lpstrFilter=filter;
     dialog.lpstrFile=selected.data();dialog.nMaxFile=static_cast<DWORD>(selected.size());dialog.lpstrTitle=L"Choose an app to start with Windows";
     dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR|OFN_HIDEREADONLY;
-    if(!GetOpenFileNameW(&dialog))return false;
+#ifdef NLITE_STARTUP_TESTING
+    const BOOL selected = gStartupFilePickerForTesting ?
+        gStartupFilePickerForTesting(&dialog) : GetOpenFileNameW(&dialog);
+#else
+    const BOOL selected = GetOpenFileNameW(&dialog);
+#endif
+    if(!selected)return false;
     const std::wstring path=selected.data();std::vector<std::wstring> names;
     for(const auto& item:EnumerateStartupItems())if(item.kind==StartupKind::UserRun)names.push_back(item.name);
     addedName=StartupValueNameForPath(path,names);const std::wstring command=QuoteArgument(path);

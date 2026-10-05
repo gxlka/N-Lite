@@ -147,6 +147,9 @@ static HANDLE gCleanerSetupProcess = nullptr;
 static uint64_t gCleanerRequestId = 0;
 static uint64_t gLastDisplayedManualRequestId = 0;
 static CleanerStatus gCleanerStatus;
+#ifdef NLITE_CLEANER_TEST_DIAGNOSTICS
+static bool (*gCleanerStatusReaderForTests)(CleanerStatus&) = nullptr;
+#endif
 static bool gManualCleanerPending = false;
 static uint64_t gManualStandbyBefore = 0;
 static bool gManualStandbyBeforeKnown = false;
@@ -575,6 +578,9 @@ static bool WriteCleanerSettings() {
     return true;
 }
 static bool ReadCleanerStatus(CleanerStatus& status) {
+#ifdef NLITE_CLEANER_TEST_DIAGNOSTICS
+    if (gCleanerStatusReaderForTests) return gCleanerStatusReaderForTests(status);
+#endif
     std::wstring text;
     return ReadCleanerText(CleanerStatusFile(), text) && ParseCleanerStatus(text, status);
 }
@@ -1118,12 +1124,15 @@ static void PollCleanerStatus() {
     }
     if (latest.lastAutoTick && latest.lastAutoTick != gLastSeenPurgeTick) {
         gLastSeenPurgeTick = latest.lastAutoTick;
-        const bool sizesKnown = previous.standbyValid && latest.standbyValid;
+        const bool exactSizesKnown = latest.autoStandbyValid;
+        const bool sizesKnown = exactSizesKnown || (previous.standbyValid && latest.standbyValid);
+        const uint64_t before = exactSizesKnown ? latest.autoStandbyBefore : previous.standbyBytes;
+        const uint64_t after = exactSizesKnown ? latest.autoStandbyAfter : latest.standbyBytes;
         const bool reduced = sizesKnown && StandbyCleanSucceeded(
-            static_cast<LONG>(latest.lastAutoStatus), previous.standbyBytes, latest.standbyBytes, gPageSize);
+            static_cast<LONG>(latest.lastAutoStatus), before, after, gPageSize);
         if (reduced) {
             const std::wstring message = L"Auto clean succeeded: " +
-                Bytes(static_cast<double>(previous.standbyBytes - latest.standbyBytes)) + L" freed";
+                Bytes(static_cast<double>(before - after)) + L" freed";
             gStatus = message;
             ShowCleanerNotification(message, CleanerNoticeKind::Success);
         } else if (IsNtOk(static_cast<LONG>(latest.lastAutoStatus))) {
