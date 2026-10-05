@@ -109,9 +109,14 @@ static bool RunSchtasks(const std::vector<std::wstring>& args) {
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESHOWWINDOW;
+    if (GetStdHandle(STD_ERROR_HANDLE) && GetStdHandle(STD_ERROR_HANDLE) != INVALID_HANDLE_VALUE) {
+        si.dwFlags |= STARTF_USESTDHANDLES;
+        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE); si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    }
     si.wShowWindow = SW_HIDE;
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(nullptr, &command[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+    if (!CreateProcessW(nullptr, &command[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
         nullptr, nullptr, &si, &pi)) return false;
     DWORD wait = WaitForSingleObject(pi.hProcess, 30000), code = 1;
     if (wait == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
@@ -308,11 +313,19 @@ static bool InstallTask(const std::wstring& helperPath, const std::wstring& sid)
         std::wstring descriptor(actual ? actual : L"");
         if (!HasExpectedCleanerTaskSecurityDescriptor(descriptor)) hr = E_ACCESSDENIED;
     }
-    if (actual) SysFreeString(actual);
+    if (actual) {
+        const std::wstring value(actual); const std::string message(value.begin(), value.end()); DWORD written = 0;
+        WriteFile(GetStdHandle(STD_ERROR_HANDLE), message.data(), static_cast<DWORD>(message.size()), &written, nullptr);
+        SysFreeString(actual);
+    }
     if (registered) registered->Release();
     if (folder) folder->Release();
     if (service) service->Release();
     if (uninitialize) CoUninitialize();
+    if (FAILED(hr)) {
+        const std::string message = "Cleaner task installation HRESULT " + std::to_string(static_cast<unsigned long>(hr)) + "\n";
+        DWORD written = 0; WriteFile(GetStdHandle(STD_ERROR_HANDLE), message.data(), static_cast<DWORD>(message.size()), &written, nullptr);
+    }
     if (FAILED(hr)) RunSchtasks({L"/Delete", L"/F", L"/TN", task});
     return SUCCEEDED(hr);
 }
