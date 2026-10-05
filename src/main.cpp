@@ -53,10 +53,10 @@ static constexpr WORD IDI_NLITE = 101;
 #pragma comment(lib, "comdlg32.lib")
 
 #ifndef NLITE_VERSION
-#define NLITE_VERSION "0.2.13"
+#define NLITE_VERSION "0.2.14"
 #endif
 #ifndef NLITE_CLEANER_VERSION
-#define NLITE_CLEANER_VERSION "3"
+#define NLITE_CLEANER_VERSION "4"
 #endif
 #define NLITE_WIDEN2(x) L##x
 #define NLITE_WIDEN(x) NLITE_WIDEN2(x)
@@ -499,7 +499,7 @@ static std::wstring CleanerStatusFile() {
     return gCleanerRoot.empty() || gUserSid.empty() ? L"" : gCleanerRoot + L"\\status-" + gUserSid + L".txt";
 }
 static bool ReadCleanerText(const std::wstring& path, std::wstring& text) {
-    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
     if (file == INVALID_HANDLE_VALUE) return false;
     BY_HANDLE_FILE_INFORMATION info{};
@@ -547,7 +547,7 @@ static std::wstring CurrentUserSid() {
     CloseHandle(token);
     return IsValidCleanerSid(result) ? result : L"";
 }
-static bool RunSchtasks(const std::vector<std::wstring>& arguments);
+static bool RunRegisteredCleanerTask();
 static bool WriteCleanerSettings() {
     if (!gCleanerTaskUsable) return true;
     CleanerSettings settings;
@@ -639,12 +639,19 @@ static bool CleanerTaskRegistered() {
     if(SUCCEEDED(hr))hr=exec->get_Arguments(&arguments);
     const std::wstring expectedPath=gCleanerRoot+L"\\N-Lite-Cleaner.exe";
     const std::wstring expectedArguments=L"--run "+gUserSid;
-    if(SUCCEEDED(hr)&&(!actionPath||_wcsicmp(actionPath,expectedPath.c_str())!=0||
+    if(SUCCEEDED(hr)&&(!actionPath||!CleanerExecutablePathMatches(actionPath,expectedPath)||
         !arguments||expectedArguments!=arguments))hr=E_ACCESSDENIED;
     if(SUCCEEDED(hr))hr=task->GetSecurityDescriptor(
         OWNER_SECURITY_INFORMATION|GROUP_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&security);
     if(SUCCEEDED(hr)&&(!security||!HasExpectedCleanerTaskSecurityDescriptor(security)))hr=E_ACCESSDENIED;
     usable=SUCCEEDED(hr);
+#ifdef NLITE_CLEANER_TEST_DIAGNOSTICS
+    std::wcerr << L"Task query hr=" << static_cast<unsigned long>(hr)
+        << L" principal=" << (principalName ? principalName : L"<none>") << L" logon=" << logonType
+        << L" path=" << (actionPath ? actionPath : L"<none>")
+        << L" args=" << (arguments ? arguments : L"<none>")
+        << L" acl=" << (security ? security : L"<none>") << std::endl;
+#endif
 
     if(actionPath)SysFreeString(actionPath);if(arguments)SysFreeString(arguments);
     if(principalName)SysFreeString(principalName);if(security)SysFreeString(security);
@@ -864,18 +871,32 @@ static std::wstring QuoteWindowsArg(const std::wstring& arg) {
     }
     out.append(slashes*2,L'\\');out.push_back(L'\"');return out;
 }
-static bool RunSchtasks(const std::vector<std::wstring>& arguments) {
-    wchar_t systemDir[MAX_PATH]{}; GetSystemDirectoryW(systemDir,MAX_PATH);
-    std::wstring command=QuoteWindowsArg(std::wstring(systemDir)+L"\\schtasks.exe");
-    for(const auto& arg:arguments){command.push_back(L' ');command+=QuoteWindowsArg(arg);}
-    STARTUPINFOW si{}; si.cb=sizeof(si); si.dwFlags=STARTF_USESHOWWINDOW; si.wShowWindow=SW_HIDE;
-    PROCESS_INFORMATION pi{};
-    if(!CreateProcessW(nullptr,&command[0],nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&si,&pi))return false;
-    DWORD wait=WaitForSingleObject(pi.hProcess,20000), code=1;
-    if(wait==WAIT_OBJECT_0)GetExitCodeProcess(pi.hProcess,&code);
-    else TerminateProcess(pi.hProcess,1);
-    CloseHandle(pi.hThread);CloseHandle(pi.hProcess);return wait==WAIT_OBJECT_0&&code==0;
+static bool RunRegisteredCleanerTask() {
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool uninitialize = SUCCEEDED(init);
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) return false;
+    ITaskService* service = nullptr; ITaskFolder* folder = nullptr;
+    IRegisteredTask* task = nullptr; IRunningTask* running = nullptr;
+    VARIANT empty; VariantInit(&empty);
+    HRESULT hr = CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ITaskService, reinterpret_cast<void**>(&service));
+    if (SUCCEEDED(hr)) hr = service->Connect(empty, empty, empty, empty);
+    BSTR root = SysAllocString(L"\\");
+    BSTR name = SysAllocString((L"N-Lite Cleaner " + gUserSid).c_str());
+    if (SUCCEEDED(hr) && root) hr = service->GetFolder(root, &folder);
+    else if (SUCCEEDED(hr)) hr = E_OUTOFMEMORY;
+    if (SUCCEEDED(hr) && name) hr = folder->GetTask(name, &task);
+    else if (SUCCEEDED(hr)) hr = E_OUTOFMEMORY;
+    if (SUCCEEDED(hr)) hr = task->Run(empty, &running);
+#ifdef NLITE_CLEANER_TEST_DIAGNOSTICS
+    std::wcerr << L"Task dispatch hr=" << static_cast<unsigned long>(hr) << std::endl;
+#endif
+    if (root) SysFreeString(root); if (name) SysFreeString(name);
+    ReleaseCleanerCom(running); ReleaseCleanerCom(task); ReleaseCleanerCom(folder); ReleaseCleanerCom(service);
+    if (uninitialize) CoUninitialize();
+    return SUCCEEDED(hr);
 }
+
 static HICON MakeIcon() {
     HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen);
     HBITMAP color = CreateCompatibleBitmap(screen, 32, 32), mask = CreateBitmap(32, 32, 1, 1, nullptr);
@@ -908,15 +929,15 @@ static std::wstring PackagedCleanerPath() {
 }
 static bool RequestCleanerTaskRun(bool manual);
 static bool StartCleanerSetup(bool forAuto, bool forManual) {
-    if (ShouldBlockCleanerSetupRetry(gCleanerSetupBlocked, forManual)) {
-        return false;
-    }
-    gCleanerSetupForAuto = gCleanerSetupForAuto || forAuto;
-    gCleanerSetupForManual = gCleanerSetupForManual || forManual;
     if (gCleanerSetupProcess && WaitForSingleObject(gCleanerSetupProcess, 0) == WAIT_TIMEOUT) {
+        gCleanerSetupForAuto = gCleanerSetupForAuto || forAuto;
+        gCleanerSetupForManual = gCleanerSetupForManual || forManual;
         gStatus = L"Ready";
         return true;
     }
+    if (ShouldBlockCleanerSetupRetry(gCleanerSetupBlocked, forManual)) return false;
+    gCleanerSetupForAuto = gCleanerSetupForAuto || forAuto;
+    gCleanerSetupForManual = gCleanerSetupForManual || forManual;
     if (gCleanerSetupProcess) { CloseHandle(gCleanerSetupProcess); gCleanerSetupProcess = nullptr; }
     if (gUserSid.empty()) {
         BlockCleanerSetup();
@@ -953,6 +974,7 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
     execute.lpParameters = parameters.c_str();
     execute.nShow = SW_HIDE;
     RegWriteDword(L"AutoTaskReady", 0);
+    BlockCleanerSetup(); // Persist the attempt before launching, including app exits during setup.
     if (!ShellExecuteExW(&execute)) {
         DWORD error = GetLastError();
         BlockCleanerSetup();
@@ -998,8 +1020,7 @@ static bool RequestCleanerTaskRun(bool manual) {
         }
         return false;
     }
-    const std::wstring task = L"N-Lite Cleaner " + gUserSid;
-    if (!RunSchtasks({L"/Run", L"/TN", task})) {
+    if (!RunRegisteredCleanerTask()) {
         gStatus = L"Ready";
         if (manual) {
             gManualCleanerPending = false;
@@ -1012,13 +1033,15 @@ static bool RequestCleanerTaskRun(bool manual) {
 }
 static void PollCleanerSetup() {
     if (!gCleanerSetupProcess || WaitForSingleObject(gCleanerSetupProcess, 0) != WAIT_OBJECT_0) return;
+    DWORD setupExit = 1;
+    GetExitCodeProcess(gCleanerSetupProcess, &setupExit);
     CloseHandle(gCleanerSetupProcess);
     gCleanerSetupProcess = nullptr;
     const bool forAuto = gCleanerSetupForAuto, forManual = gCleanerSetupForManual;
     gCleanerSetupForAuto = false; gCleanerSetupForManual = false;
     RefreshCleanerSetupState();
     RegWriteDword(L"AutoTaskReady", gCleanerTaskUsable ? 1 : 0);
-    if (!gCleanerInstalled || !gCleanerCurrentVersion) {
+    if (setupExit != 0 || !gCleanerTaskUsable || !gCleanerInstalled || !gCleanerCurrentVersion) {
         BlockCleanerSetup();
         bool fallbackStarted = false;
         if (gCleanerTaskUsable) {
@@ -1757,6 +1780,8 @@ static void SaveToggleAuto() {
     SaveSettings();
     if(gCleanerTaskUsable)
         RequestCleanerTaskRun(false);
+    else if(gCleanerSetupProcess && WaitForSingleObject(gCleanerSetupProcess,0)==WAIT_TIMEOUT)
+        StartCleanerSetup(true,false);
     else if(!ShouldPromptCleanerSetup(false,gCleanerSetupBlocked,false))
         DisableAutoCleanAfterSetupFailure(true);
     else StartCleanerSetup(true,false);

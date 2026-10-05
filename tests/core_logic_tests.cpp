@@ -106,7 +106,7 @@ int main() {
         "auto_toggle_never_prompts_when_system_task_is_ready_or_setup_was_cancelled");
     Check(ShouldSuppressCleanerUpdateRetry(true, false, 2, 2) &&
         !ShouldSuppressCleanerUpdateRetry(true, false, 2, 1) &&
-        !ShouldSuppressCleanerUpdateRetry(true, true, 2, 2) &&
+        ShouldSuppressCleanerUpdateRetry(true, true, 2, 2) &&
         ShouldSuppressCleanerUpdateRetry(false, false, 2, 2),
         "failed_cleaner_setup_is_suppressed_for_same_version_until_manual_retry");
     Check(ShouldBlockCleanerSetupRetry(true, false) &&
@@ -169,21 +169,31 @@ int main() {
     Check(!HasExpectedCleanerTaskSecurityDescriptor(
         L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;CI;GRGX;;;BU)"),
         "task_acl_rejects_inheritable_task_access");
-    Check(!HasExpectedCleanerTaskSecurityDescriptor(
+    Check(HasExpectedCleanerTaskSecurityDescriptor(
         L"O:BAG:BAD:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)"),
-        "task_acl_rejects_auto_inherited_dacl_flags");
+        "task_acl_accepts_scheduler_auto_inherited_control_flag_with_safe_aces");
 
+    Check(ShouldSuppressCleanerUpdateRetry(true, true, 4, 4),
+        "failed_task_repair_stays_blocked_even_with_current_version_marker");
+    Check(HasExpectedCleanerTaskSecurityDescriptor(
+        L"O:BAG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)(A;;FR;;;SY)"),
+        "task_acl_accepts_actual_windows_scheduler_descriptor");
+    Check(CleanerExecutablePathMatches(L"\"C:\\ProgramData\\N-Lite\\N-Lite-Cleaner.exe\"",
+        L"C:\\ProgramData\\N-Lite\\N-Lite-Cleaner.exe") &&
+        !CleanerExecutablePathMatches(L"\"C:\\ProgramData\\N-Lite\\N-Lite-Cleaner.exe\" --other",
+        L"C:\\ProgramData\\N-Lite\\N-Lite-Cleaner.exe"),
+        "task_action_accepts_scheduler_quoted_path_without_allowing_extra_arguments");
     SystemMemoryListInfo memoryLists{};
     memoryLists.standby[0] = 2;
     memoryLists.standby[7] = 3;
-    Check(sizeof(memoryLists) == 88, "system_memory_list_information_uses_fixed_32_bit_fields");
+    Check(sizeof(memoryLists) == 22 * sizeof(uintptr_t), "system_memory_list_information_uses_native_pointer_sized_counts");
     Check(StandbyBytesFromPageCounts(memoryLists, 4096) == 5u * 4096u,
         "standby_bytes_sum_all_eight_priority_buckets");
     memoryLists.freePageCount = 7;
-    Check(offsetof(SystemMemoryListInfo, freePageCount) == 4 &&
-        offsetof(SystemMemoryListInfo, standby) == 20 &&
+    Check(offsetof(SystemMemoryListInfo, freePageCount) == sizeof(uintptr_t) &&
+        offsetof(SystemMemoryListInfo, standby) == 5 * sizeof(uintptr_t) &&
         FreeBytesFromPageCount(memoryLists, 4096) == 7u * 4096u,
-        "memory_panel_reads_the_32_bit_free_and_standby_counters");
+        "memory_panel_reads_native_free_and_standby_counters");
     MemoryQueryFixture queryFixture;
     queryFixture.response.standby[2] = 11;
     queryFixture.response.freePageCount = 17;

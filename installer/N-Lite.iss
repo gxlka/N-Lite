@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.13"
+  #define MyAppVersion "0.2.14"
 #endif
 
 #define MyAppName "N-Lite"
@@ -51,6 +51,24 @@ Filename: "{app}\N-Lite.exe"; Description: "Launch N-Lite"; WorkingDir: "{app}";
 Filename: "{app}\N-Lite.exe"; Parameters: "--updated"; WorkingDir: "{app}"; Flags: nowait skipifnotsilent
 
 [Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Sid: string;
+  ExitCode: Integer;
+begin
+  if (CurStep = ssPostInstall) and
+     RegQueryStringValue(HKCU, 'Software\N-Lite', 'CleanerSid', Sid) and
+     FileExists(ExpandConstant('{commonappdata}\N-Lite\N-Lite-Cleaner.exe')) then begin
+    { Upgrade the protected helper once during installation, before normal app use. }
+    if ShellExec('runas', ExpandConstant('{app}\N-Lite-Cleaner.exe'),
+       '--install ' + Sid, ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ExitCode) and
+       (ExitCode = 0) then
+      RegWriteDWordValue(HKCU, 'Software\N-Lite', 'CleanerSetupBlockedVersion', 0)
+    else
+      RegWriteDWordValue(HKCU, 'Software\N-Lite', 'CleanerSetupBlockedVersion', 4);
+  end;
+end;
+
 function InitializeUninstall(): Boolean;
 var
   Sid: string;

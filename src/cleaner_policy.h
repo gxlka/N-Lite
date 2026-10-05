@@ -39,7 +39,8 @@ inline bool ShouldPromptCleanerSetup(bool taskUsable, bool setupBlocked, bool ma
 inline bool ShouldSuppressCleanerUpdateRetry(bool helperInstalled, bool helperCurrent,
                                              uint32_t currentVersion, uint32_t failedVersion) {
     (void)helperInstalled;
-    return !helperCurrent && currentVersion != 0 &&
+    (void)helperCurrent;
+    return currentVersion != 0 &&
         currentVersion == failedVersion;
 }
 
@@ -70,14 +71,14 @@ struct CleanerStatus {
 };
 
 struct SystemMemoryListInfo {
-    uint32_t zeroPageCount = 0;
-    uint32_t freePageCount = 0;
-    uint32_t modifiedPageCount = 0;
-    uint32_t modifiedNoWritePageCount = 0;
-    uint32_t badPageCount = 0;
-    uint32_t standby[8]{};
-    uint32_t repurposed[8]{};
-    uint32_t modifiedPageCountPageFile = 0;
+    uintptr_t zeroPageCount = 0;
+    uintptr_t freePageCount = 0;
+    uintptr_t modifiedPageCount = 0;
+    uintptr_t modifiedNoWritePageCount = 0;
+    uintptr_t badPageCount = 0;
+    uintptr_t standby[8]{};
+    uintptr_t repurposed[8]{};
+    uintptr_t modifiedPageCountPageFile = 0;
 };
 
 inline constexpr uint32_t kSystemMemoryListInformationClass = 80;
@@ -128,6 +129,14 @@ inline bool CleanerPolicyMatches(const std::wstring& value, const wchar_t* first
         CleanerPolicyEquals(value, third);
 }
 
+inline bool CleanerExecutablePathMatches(const std::wstring& actual,
+                                         const std::wstring& expected) {
+    std::wstring path = actual;
+    if (path.size() >= 2 && path.front() == L'"' && path.back() == L'"')
+        path = path.substr(1, path.size() - 2);
+    return CleanerPolicyEquals(path, expected.c_str());
+}
+
 inline bool HasExpectedCleanerTaskSecurityDescriptor(const std::wstring& descriptor) {
     if (descriptor.compare(0, 2, L"O:") != 0) return false;
     size_t ownerEnd = descriptor.find(L"G:", 2);
@@ -139,8 +148,13 @@ inline bool HasExpectedCleanerTaskSecurityDescriptor(const std::wstring& descrip
         descriptor.substr(2, ownerEnd - 2), L"BA", L"S-1-5-32-544")) return false;
 
     const size_t dacl = descriptor.find(L"D:");
-    if (dacl == std::wstring::npos || dacl + 3 >= descriptor.size() ||
-        descriptor[dacl + 2] != L'P' || descriptor[dacl + 3] != L'(') return false;
+    if (dacl == std::wstring::npos) return false;
+    const size_t firstAce = descriptor.find(L'(', dacl + 2);
+    if (firstAce == std::wstring::npos) return false;
+    const std::wstring controls = descriptor.substr(dacl + 2, firstAce - dacl - 2);
+    // Scheduler normalizes DACL control flags independently of the effective ACE grants.
+    if (!CleanerPolicyMatches(controls, L"", L"P", L"PAI") &&
+        !CleanerPolicyEquals(controls, L"AI")) return false;
     size_t daclEnd = descriptor.find(L"S:", dacl + 2);
     if (daclEnd == std::wstring::npos) daclEnd = descriptor.size();
 
@@ -167,15 +181,17 @@ inline bool HasExpectedCleanerTaskSecurityDescriptor(const std::wstring& descrip
         if (full && CleanerPolicyMatches(fields[5], L"SY", L"S-1-5-18") && !systemFull) systemFull = true;
         else if (full && CleanerPolicyMatches(fields[5], L"BA", L"S-1-5-32-544") && !adminsFull) adminsFull = true;
         else if (run && CleanerPolicyMatches(fields[5], L"BU", L"S-1-5-32-545") && !usersRun) usersRun = true;
+        else if (CleanerPolicyMatches(fields[5], L"SY", L"S-1-5-18") &&
+            CleanerPolicyMatches(fields[2], L"FR", L"0X120089")) {} // Scheduler-added SYSTEM read ACE.
         else return false;
         open = descriptor.find(L'(', close + 1);
     }
-    return aceCount == 3 && systemFull && adminsFull && usersRun;
+    return (aceCount == 3 || aceCount == 4) && systemFull && adminsFull && usersRun;
 }
 
 inline uint64_t StandbyBytesFromPageCounts(const SystemMemoryListInfo& info, uint32_t pageSize) {
     uint64_t pages = 0;
-    for (uint32_t count : info.standby) pages += count;
+    for (uintptr_t count : info.standby) pages += count;
     return pages * pageSize;
 }
 
