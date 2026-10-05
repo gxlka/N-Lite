@@ -93,11 +93,17 @@ int main() {
     Check(DecideCleanerSetup(false, true) == CleanerSetupAction::Install,
         "missing_cleaner_setup_marker_requests_install");
 
-    Check(CanUseRegisteredCleanerTask(true, true, false) &&
-        CanUseRegisteredCleanerTask(true, false, true) &&
-        !CanUseRegisteredCleanerTask(true, false, false) &&
-        !CanUseRegisteredCleanerTask(false, false, true),
-        "registered_cleaner_remains_runnable_after_failed_update");
+    Check(CanUseRegisteredCleanerTask(true, true, true) &&
+        !CanUseRegisteredCleanerTask(false, true, true) &&
+        !CanUseRegisteredCleanerTask(true, false, true) &&
+        !CanUseRegisteredCleanerTask(true, true, false),
+        "existing_system_task_runs_without_reinstalling_for_a_helper_version_change");
+    Check(!ShouldPromptCleanerSetup(true, false, false) &&
+        !ShouldPromptCleanerSetup(true, true, false) &&
+        !ShouldPromptCleanerSetup(false, true, false) &&
+        ShouldPromptCleanerSetup(false, false, false) &&
+        ShouldPromptCleanerSetup(false, true, true),
+        "auto_toggle_never_prompts_when_system_task_is_ready_or_setup_was_cancelled");
     Check(ShouldSuppressCleanerUpdateRetry(true, false, 2, 2) &&
         !ShouldSuppressCleanerUpdateRetry(true, false, 2, 1) &&
         !ShouldSuppressCleanerUpdateRetry(true, true, 2, 2) &&
