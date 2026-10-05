@@ -20,6 +20,7 @@ static bool Check(bool ok, const char* label) {
 }
 static bool WaitStatus(bool manual, uint64_t previousTick) {
     const ULONGLONG deadline = GetTickCount64() + 30000;
+    ULONGLONG lastRefresh = GetTickCount64();
     while (GetTickCount64() < deadline) {
         CleanerStatus status;
         if (ReadCleanerStatus(status) && (manual ?
@@ -29,6 +30,11 @@ static bool WaitStatus(bool manual, uint64_t previousTick) {
                 << " after=" << status.manualStandbyAfter << " ntstatus=" << status.lastManualStatus << std::endl;
             return status.standbyValid && (!manual || (status.lastManualStatus >= 0 && status.manualStandbyValid &&
                 StandbyCleanSucceeded(status.lastManualStatus, status.manualStandbyBefore, status.manualStandbyAfter, gPageSize)));
+        }
+        if (manual && GetTickCount64() - lastRefresh >= 1000) {
+            // Use the real GUI timer: a busy task may coalesce a Run request.
+            WndProc(nullptr, WM_TIMER, TIMER_REFRESH, 0);
+            lastRefresh = GetTickCount64();
         }
         Sleep(100);
     }
