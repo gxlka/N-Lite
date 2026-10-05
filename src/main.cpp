@@ -645,6 +645,13 @@ static bool CleanerTaskRegistered() {
         OWNER_SECURITY_INFORMATION|GROUP_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&security);
     if(SUCCEEDED(hr)&&(!security||!HasExpectedCleanerTaskSecurityDescriptor(security)))hr=E_ACCESSDENIED;
     usable=SUCCEEDED(hr);
+#ifdef NLITE_CLEANER_TEST_DIAGNOSTICS
+    std::wcerr << L"Task query hr=" << static_cast<unsigned long>(hr)
+        << L" principal=" << (principalName ? principalName : L"<none>") << L" logon=" << logonType
+        << L" path=" << (actionPath ? actionPath : L"<none>")
+        << L" args=" << (arguments ? arguments : L"<none>")
+        << L" acl=" << (security ? security : L"<none>") << std::endl;
+#endif
 
     if(actionPath)SysFreeString(actionPath);if(arguments)SysFreeString(arguments);
     if(principalName)SysFreeString(principalName);if(security)SysFreeString(security);

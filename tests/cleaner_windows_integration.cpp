@@ -7,6 +7,7 @@ static unsigned elevationAttempts = 0;
 static BOOL WINAPI RejectElevation(SHELLEXECUTEINFOW*) {
     ++elevationAttempts; SetLastError(ERROR_CANCELLED); return FALSE;
 }
+#define NLITE_CLEANER_TEST_DIAGNOSTICS
 #define ShellExecuteExW RejectElevation
 #define wWinMain NliteGuiMain
 #include "../src/main.cpp"
@@ -41,6 +42,7 @@ static int NonAdminTest() {
     gUserSid = CurrentUserSid(); gCleanerRoot = ProgramDataNlite();
     wchar_t exe[32768]; GetModuleFileNameW(nullptr, exe, 32768); gExePath = exe;
     LoadNt(); LoadSettings();
+    std::cout << "helper=" << CleanerHelperPresent() << " settings=" << CleanerSettingsReady() << std::endl;
     bool ok = Check(gCleanerTaskUsable, "existing SYSTEM task recognized by app");
     if (!ok) return 1;
     gAutoPurge = false; gThresholdMB = 64; SaveSettings();
