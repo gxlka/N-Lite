@@ -17,7 +17,7 @@
 #include "cleaner_policy.h"
 
 #ifndef NLITE_CLEANER_VERSION
-#define NLITE_CLEANER_VERSION "5"
+#define NLITE_CLEANER_VERSION "6"
 #endif
 #define NLITE_WIDEN2(x) L##x
 #define NLITE_WIDEN(x) NLITE_WIDEN2(x)
@@ -510,24 +510,21 @@ static bool Run(const std::wstring& sid) {
     } else if (settings.enabled && standbyValid) {
         const uint64_t now = GetTickCount64();
         const uint64_t threshold = static_cast<uint64_t>(settings.thresholdMb) * 1024u * 1024u;
-        if (standby < threshold) {
-            status.autoArmed = true;
-        } else if (ShouldRunAutoClean(settings, standby, now, status.lastAutoTick, status.autoArmed)) {
+        // Older helpers could persist autoArmed=false after one successful clean.
+        // Auto clean is interval-based, so keep it armed and let the saved interval gate repeats.
+        status.autoArmed = true;
+        if (standby >= threshold &&
+            ShouldRunAutoClean(settings, standby, now, status.lastAutoTick)) {
             const uint64_t before = standby;
             LONG result = PurgeStandby();
-            status.lastAutoTick = now;
             status.lastAutoStatus = static_cast<int32_t>(result);
             uint64_t after = 0;
             const bool afterValid = ReadStandbyBytes(after);
+            status.lastAutoTick = GetTickCount64();
             status.autoStandbyCaptured = true;
             status.autoStandbyValid = afterValid;
             status.autoStandbyBefore = before;
             status.autoStandbyAfter = afterValid ? after : 0;
-            SYSTEM_INFO system{};
-            GetSystemInfo(&system);
-            const uint64_t pageSize = system.dwPageSize ? system.dwPageSize : 4096;
-            status.autoArmed = AutoCleanShouldRemainArmedAfterRun(
-                static_cast<int32_t>(result), afterValid, before, after, pageSize, threshold);
             status.standbyValid = afterValid;
             status.standbyBytes = afterValid ? after : 0;
             status.standbyTick = GetTickCount64();

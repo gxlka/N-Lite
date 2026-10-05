@@ -209,26 +209,52 @@ std::wstring BstrText(BSTR value) {
 bool IsMicrosoftTaskPath(const std::wstring& path) {
     return IsProtectedStartupTaskPath(path);
 }
-bool IsCurrentTaskPrincipal(const std::wstring& principal) {
-    if(principal.empty())return false;
-    HANDLE token=nullptr;if(!OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&token))return false;
-    DWORD bytes=0;GetTokenInformation(token,TokenUser,nullptr,0,&bytes);
-    std::vector<BYTE> buffer(bytes);bool same=false;
-    if(bytes&&GetTokenInformation(token,TokenUser,buffer.data(),bytes,&bytes)){
-        PSID current=reinterpret_cast<TOKEN_USER*>(buffer.data())->User.Sid;
-        PSID requested=nullptr;DWORD sidBytes=0,domainChars=0;SID_NAME_USE use{};
-        if(ConvertStringSidToSidW(principal.c_str(),&requested)){
-            same=EqualSid(current,requested)!=FALSE;LocalFree(requested);
-        }else{
-            LookupAccountNameW(nullptr,principal.c_str(),nullptr,&sidBytes,nullptr,&domainChars,&use);
-            if(sidBytes){
-                std::vector<BYTE> sid(sidBytes);std::vector<wchar_t> domain(domainChars?domainChars:1);
-                if(LookupAccountNameW(nullptr,principal.c_str(),sid.data(),&sidBytes,
-                    domain.data(),&domainChars,&use))same=EqualSid(current,sid.data())!=FALSE;
-            }
-        }
+struct ScheduledTaskAccess {
+    bool canWrite = false;
+    bool canWriteDac = false;
+    bool canDelete = false;
+};
+bool ScheduledTaskAccessGranted(PSECURITY_DESCRIPTOR descriptor,DWORD desiredAccess) {
+    if(!descriptor)return false;
+    HANDLE primary=nullptr,token=nullptr;
+    if(!OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY|TOKEN_DUPLICATE,&primary))return false;
+    const bool duplicated=DuplicateTokenEx(primary,TOKEN_QUERY,nullptr,SecurityImpersonation,
+        TokenImpersonation,&token)!=FALSE;
+    CloseHandle(primary);
+    if(!duplicated)return false;
+    GENERIC_MAPPING mapping{};
+    mapping.GenericRead=FILE_GENERIC_READ;mapping.GenericWrite=FILE_GENERIC_WRITE;
+    mapping.GenericExecute=FILE_GENERIC_EXECUTE;mapping.GenericAll=FILE_ALL_ACCESS;
+    DWORD granted=0;BOOL accessStatus=FALSE;
+    std::vector<BYTE> privileges(4096);
+    DWORD privilegeBytes=static_cast<DWORD>(privileges.size());
+    BOOL checked=AccessCheck(descriptor,token,desiredAccess,&mapping,
+        reinterpret_cast<PPRIVILEGE_SET>(privileges.data()),&privilegeBytes,&granted,&accessStatus);
+    if(!checked&&GetLastError()==ERROR_INSUFFICIENT_BUFFER&&privilegeBytes>privileges.size()){
+        privileges.resize(privilegeBytes);
+        privilegeBytes=static_cast<DWORD>(privileges.size());
+        checked=AccessCheck(descriptor,token,desiredAccess,&mapping,
+            reinterpret_cast<PPRIVILEGE_SET>(privileges.data()),&privilegeBytes,&granted,&accessStatus);
     }
-    CloseHandle(token);return same;
+    CloseHandle(token);
+    return checked&&accessStatus!=FALSE;
+}
+ScheduledTaskAccess ReadScheduledTaskAccess(IRegisteredTask* task) {
+    ScheduledTaskAccess access;
+    if(!task)return access;
+    BSTR sddl=nullptr;
+    if(FAILED(task->GetSecurityDescriptor(OWNER_SECURITY_INFORMATION|GROUP_SECURITY_INFORMATION|
+        DACL_SECURITY_INFORMATION,&sddl))||!sddl)return access;
+    PSECURITY_DESCRIPTOR descriptor=nullptr;
+    const BOOL converted=ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl,
+        SDDL_REVISION_1,&descriptor,nullptr);
+    SysFreeString(sddl);
+    if(!converted||!descriptor)return access;
+    access.canWrite=ScheduledTaskAccessGranted(descriptor,FILE_GENERIC_WRITE);
+    access.canWriteDac=ScheduledTaskAccessGranted(descriptor,WRITE_DAC);
+    access.canDelete=ScheduledTaskAccessGranted(descriptor,DELETE);
+    LocalFree(descriptor);
+    return access;
 }
 std::wstring TaskCommand(ITaskDefinition* definition) {
     IActionCollection* actions=nullptr;if(FAILED(definition->get_Actions(&actions)))return L"";
@@ -290,18 +316,20 @@ void AddTasksInFolder(ITaskFolder* folder,std::vector<StartupItem>& items,unsign
                             item.command=TaskCommand(definition);
                             VARIANT_BOOL enabled=VARIANT_FALSE;task->get_Enabled(&enabled);
                             item.enabled=enabled==VARIANT_TRUE&&hasEnabledStartupTrigger;
-                            BSTR user=nullptr;IPrincipal* principal=nullptr;TASK_LOGON_TYPE logonType=TASK_LOGON_NONE;
+                            IPrincipal* principal=nullptr;TASK_LOGON_TYPE logonType=TASK_LOGON_NONE;
                             if(SUCCEEDED(definition->get_Principal(&principal))&&principal){
-                                principal->get_UserId(&user);principal->get_LogonType(&logonType);ReleaseCom(principal);
+                                principal->get_LogonType(&logonType);ReleaseCom(principal);
                             }
-                            const bool currentUser=IsCurrentTaskPrincipal(BstrText(user));
                             const bool protectedTask=IsMicrosoftTaskPath(item.taskPath);
+                            const ScheduledTaskAccess taskAccess=ReadScheduledTaskAccess(task);
                             const bool canRestoreDisabledTrigger=hasEnabledStartupTrigger||
                                 logonType==TASK_LOGON_INTERACTIVE_TOKEN||logonType==TASK_LOGON_S4U;
-                            item.canToggle=StartupTaskCanBeToggled(startup,onlyStartup,currentUser,
-                                protectedTask,canRestoreDisabledTrigger);
-                            item.canDelete=onlyStartup&&StartupEntryCanBeDeleted(currentUser,protectedTask);
-                            SysFreeString(taskName);SysFreeString(taskPath);SysFreeString(user);
+                            item.canToggle=StartupTaskCanBeToggled(startup,onlyStartup,
+                                protectedTask,canRestoreDisabledTrigger,taskAccess.canWrite,
+                                hasEnabledStartupTrigger||taskAccess.canWriteDac);
+                            item.canDelete=StartupTaskCanBeDeleted(onlyStartup,protectedTask,
+                                taskAccess.canDelete);
+                            SysFreeString(taskName);SysFreeString(taskPath);
                             if(!item.taskPath.empty())items.push_back(std::move(item));
                         }
                         ReleaseCom(triggers);
@@ -518,7 +546,19 @@ bool SetStartupItemEnabled(StartupItem& item,bool enabled) {
         const std::wstring suffix=L".nlite-disabled";if(item.enabled==enabled)return true;
         const std::wstring destination=enabled?item.path.substr(0,item.path.size()-suffix.size()):item.path+suffix;
         if(!enabled&&GetFileAttributesW(destination.c_str())!=INVALID_FILE_ATTRIBUTES)return false;
-        if(!MoveFileExW(item.path.c_str(),destination.c_str(),MOVEFILE_WRITE_THROUGH))return false;
+        const DWORD originalAttributes=GetFileAttributesW(item.path.c_str());
+        if(originalAttributes==INVALID_FILE_ATTRIBUTES)return false;
+        const bool wasReadOnly=(originalAttributes&FILE_ATTRIBUTE_READONLY)!=0;
+        if(wasReadOnly&&!SetFileAttributesW(item.path.c_str(),originalAttributes&~FILE_ATTRIBUTE_READONLY))return false;
+        if(!MoveFileExW(item.path.c_str(),destination.c_str(),MOVEFILE_WRITE_THROUGH)){
+            if(wasReadOnly)SetFileAttributesW(item.path.c_str(),originalAttributes);
+            return false;
+        }
+        if(wasReadOnly){
+            const DWORD destinationAttributes=GetFileAttributesW(destination.c_str());
+            if(destinationAttributes!=INVALID_FILE_ATTRIBUTES)
+                SetFileAttributesW(destination.c_str(),destinationAttributes|FILE_ATTRIBUTE_READONLY);
+        }
         item.path=destination;item.enabled=enabled;return true;
     }
     const std::wstring activeSubkey=RunSubkey(item.kind);
@@ -558,7 +598,12 @@ bool DeleteStartupItem(StartupItem& item) {
     if(item.kind==StartupKind::UserFolder){
         const DWORD attributes=GetFileAttributesW(item.path.c_str());
         if(attributes==INVALID_FILE_ATTRIBUTES||(attributes&FILE_ATTRIBUTE_DIRECTORY))return false;
-        if(!DeleteFileW(item.path.c_str()))return false;
+        const bool wasReadOnly=(attributes&FILE_ATTRIBUTE_READONLY)!=0;
+        if(wasReadOnly&&!SetFileAttributesW(item.path.c_str(),attributes&~FILE_ATTRIBUTE_READONLY))return false;
+        if(!DeleteFileW(item.path.c_str())){
+            if(wasReadOnly)SetFileAttributesW(item.path.c_str(),attributes);
+            return false;
+        }
         if(!item.approvalSubkey.empty()&&!item.approvalName.empty()&&
             RegOpenKeyExW(HKEY_CURRENT_USER,item.approvalSubkey.c_str(),0,
                 KEY_SET_VALUE|item.registryView,&key)==ERROR_SUCCESS){

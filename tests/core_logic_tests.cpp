@@ -117,20 +117,20 @@ int main() {
         !StandbyCleanSucceeded(0, 16 * 1024 * 1024, 16 * 1024 * 1024, 4096) &&
         !StandbyCleanSucceeded(static_cast<int32_t>(0xC0000061u), 16 * 1024 * 1024, 2 * 1024 * 1024, 4096),
         "standby_clean_succeeds_only_when_windows_succeeds_and_size_drops");
-    Check(AutoCleanNeedsRetry(0, true, 16 * 1024 * 1024, 16 * 1024 * 1024, 4096) &&
-        AutoCleanNeedsRetry(static_cast<int32_t>(0xC0000061u), true, 16 * 1024 * 1024, 2 * 1024 * 1024, 4096) &&
-        AutoCleanNeedsRetry(0, false, 16 * 1024 * 1024, 0, 4096) &&
-        !AutoCleanNeedsRetry(0, true, 16 * 1024 * 1024, 2 * 1024 * 1024, 4096),
-        "automatic_cleaner_retries_until_a_standby_reduction_is_verified");
-    Check(AutoCleanShouldRemainArmedAfterRun(0, true, 16 * 1024 * 1024,
-            2 * 1024 * 1024, 4096, 4 * 1024 * 1024) &&
-        !AutoCleanShouldRemainArmedAfterRun(0, true, 16 * 1024 * 1024,
-            8 * 1024 * 1024, 4096, 4 * 1024 * 1024) &&
-        AutoCleanShouldRemainArmedAfterRun(0, false, 16 * 1024 * 1024,
-            0, 4096, 4 * 1024 * 1024) &&
-        AutoCleanShouldRemainArmedAfterRun(static_cast<int32_t>(0xC0000061u), true,
-            16 * 1024 * 1024, 2 * 1024 * 1024, 4096, 4 * 1024 * 1024),
-        "automatic_cleaner_rearms_immediately_when_a_verified_purge_falls_below_threshold");
+    CleanerSettings repeatSettings;
+    repeatSettings.enabled = true;
+    repeatSettings.thresholdMb = 64;
+    repeatSettings.intervalSeconds = 60;
+    const uint64_t standbyAtThreshold = 64ull * 1024 * 1024;
+    Check(!ShouldRunAutoClean(repeatSettings, standbyAtThreshold - 1, 60000, 0) &&
+        ShouldRunAutoClean(repeatSettings, standbyAtThreshold, 60000, 0) &&
+        !ShouldRunAutoClean(repeatSettings, standbyAtThreshold, 60000, 1000) &&
+        ShouldRunAutoClean(repeatSettings, standbyAtThreshold, 61000, 1000),
+        "auto_clean_repeats_at_the_saved_interval_while_standby_stays_over_threshold");
+    Check(AutoCleanIntervalRemainingSeconds(61000, 1000, 60) == 0 &&
+        AutoCleanIntervalRemainingSeconds(60000, 1000, 60) == 1 &&
+        AutoCleanIntervalRemainingSeconds(1000, 61000, 60) == 0,
+        "auto_clean_interval_countdown_handles_due_and_rebooted_ticks");
     const std::vector<uint8_t> approvalEnabled{2, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     const std::vector<uint8_t> approvalDisabled{3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     Check(ParseStartupApprovalState(approvalEnabled) == StartupApprovalState::Enabled &&
@@ -148,20 +148,24 @@ int main() {
     Check(IsStartupTaskTriggerType(8) && IsStartupTaskTriggerType(9) &&
         !IsStartupTaskTriggerType(2),
         "only_boot_and_logon_tasks_count_as_startup");
-    Check(StartupTaskCanBeToggled(true, true, true, false, true),
+    Check(StartupTaskCanBeToggled(true, true, false, true, true, true),
         "disabled_startup_task_keeps_an_enable_control");
-    Check(!StartupTaskCanBeToggled(false, true, true, false, true) &&
-        !StartupTaskCanBeToggled(true, false, true, false, true) &&
-        !StartupTaskCanBeToggled(true, true, false, false, true) &&
-        !StartupTaskCanBeToggled(true, true, true, true, true) &&
-        !StartupTaskCanBeToggled(true, true, true, false, false),
-        "startup_task_controls_stay_limited_to_owned_startup_tasks");
+    Check(!StartupTaskCanBeToggled(false, true, false, true, true, true) &&
+        !StartupTaskCanBeToggled(true, false, false, true, true, true) &&
+        !StartupTaskCanBeToggled(true, true, true, true, true, true) &&
+        !StartupTaskCanBeToggled(true, true, false, false, true, true) &&
+        !StartupTaskCanBeToggled(true, true, false, true, false, true) &&
+        !StartupTaskCanBeToggled(true, true, false, true, true, false),
+        "startup_task_toggle_requires_an_editable_startup_task");
     Check(IsProtectedStartupTaskPath(L"\\Microsoft\\Windows\\UpdateOrchestrator") &&
         !IsProtectedStartupTaskPath(L"\\Vendor\\Updater") &&
-        StartupEntryCanBeDeleted(true, false) && !StartupEntryCanBeDeleted(false, false) &&
-        !StartupEntryCanBeDeleted(true, true) && IsStartupFolderLaunchableFile(L"desktop.lnk") &&
+        StartupTaskCanBeDeleted(true, false, true) &&
+        !StartupTaskCanBeDeleted(false, false, true) &&
+        !StartupTaskCanBeDeleted(true, true, true) &&
+        !StartupTaskCanBeDeleted(true, false, false) &&
+        IsStartupFolderLaunchableFile(L"desktop.lnk") &&
         IsStartupFolderLaunchableFile(L"app.exe") && !IsStartupFolderLaunchableFile(L"notes.txt"),
-        "startup_inventory_includes_system_tasks_but_only_deletes_owned_entries");
+        "startup_inventory_protects_windows_tasks_and_checks_task_access");
     Check(StartupEntryPriorityBefore(true, false) && !StartupEntryPriorityBefore(false, true) &&
         !StartupEntryPriorityBefore(true, true),
         "windows_desktop_and_sign_in_entries_are_prioritized_in_startup_list");
@@ -305,14 +309,19 @@ int main() {
     settings.thresholdMb = 64;
     settings.intervalSeconds = 60;
     const uint64_t thresholdBytes = uint64_t{64} * 1024 * 1024;
-    Check(ShouldRunAutoClean(settings, thresholdBytes, 120000, 60000, true),
+    Check(ShouldRunAutoClean(settings, thresholdBytes, 120000, 60000),
         "auto_clean_requires_enabled_threshold_and_elapsed_interval");
-    Check(!ShouldRunAutoClean(settings, thresholdBytes - 1, 120000, 60000, true),
+    Check(!ShouldRunAutoClean(settings, thresholdBytes - 1, 120000, 60000),
         "below_threshold_does_not_auto_clean");
-    Check(!ShouldRunAutoClean(settings, thresholdBytes, 120000, 60000, false),
-        "auto_clean_waits_for_threshold_to_rearm_after_a_verified_clean");
-    Check(!ShouldRunAutoClean(settings, thresholdBytes, 119999, 60000, true),
+    Check(!ShouldRunAutoClean(settings, thresholdBytes, 119999, 60000),
         "auto_clean_waits_for_interval");
+    Check(AutoCleanStatusText(true, true, true, thresholdBytes, 64, 1000, 0, 60) ==
+            L"Eligible; next check within one minute." &&
+        AutoCleanStatusText(true, true, true, thresholdBytes, 64, 1000, 1000, 60) ==
+            L"Next clean eligible in 1 min; checks every minute." &&
+        AutoCleanStatusText(true, true, true, thresholdBytes - 1, 64, 1000, 0, 60) ==
+            L"Below threshold; checks every minute.",
+        "auto_clean_status_explains_threshold_and_repeat_timing");
     Check(ManualRequestCompleted(7, 7) && !ManualRequestCompleted(8, 7) && !ManualRequestCompleted(0, 7),
         "manual_request_is_reported_only_after_matching_completion");
 
