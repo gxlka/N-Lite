@@ -46,6 +46,13 @@ static int NonAdminTest() {
     bool ok = Check(gCleanerTaskUsable, "existing SYSTEM task recognized by app");
     if (!ok) return 1;
     gAutoPurge = false; gThresholdMB = 64; SaveSettings();
+    gCleanerTaskUsable = false; gCleanerSetupBlocked = true;
+    gCleanerSetupProcess = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    SaveToggleAuto();
+    ok &= Check(gAutoPurge && elevationAttempts == 0, "toggle joins pending setup without a second elevation");
+    CloseHandle(gCleanerSetupProcess); gCleanerSetupProcess = nullptr;
+    gCleanerSetupForAuto = false; gCleanerSetupBlocked = false; gCleanerTaskUsable = true;
+    gAutoPurge = false; SaveSettings();
     CleanerStatus previous; ReadCleanerStatus(previous);
     SaveToggleAuto();
     ok &= Check(gAutoPurge, "auto clean remains enabled");

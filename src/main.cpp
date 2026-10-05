@@ -547,7 +547,7 @@ static std::wstring CurrentUserSid() {
     CloseHandle(token);
     return IsValidCleanerSid(result) ? result : L"";
 }
-static bool RunSchtasks(const std::vector<std::wstring>& arguments);
+static bool RunRegisteredCleanerTask();
 static bool WriteCleanerSettings() {
     if (!gCleanerTaskUsable) return true;
     CleanerSettings settings;
@@ -871,18 +871,32 @@ static std::wstring QuoteWindowsArg(const std::wstring& arg) {
     }
     out.append(slashes*2,L'\\');out.push_back(L'\"');return out;
 }
-static bool RunSchtasks(const std::vector<std::wstring>& arguments) {
-    wchar_t systemDir[MAX_PATH]{}; GetSystemDirectoryW(systemDir,MAX_PATH);
-    std::wstring command=QuoteWindowsArg(std::wstring(systemDir)+L"\\schtasks.exe");
-    for(const auto& arg:arguments){command.push_back(L' ');command+=QuoteWindowsArg(arg);}
-    STARTUPINFOW si{}; si.cb=sizeof(si); si.dwFlags=STARTF_USESHOWWINDOW; si.wShowWindow=SW_HIDE;
-    PROCESS_INFORMATION pi{};
-    if(!CreateProcessW(nullptr,&command[0],nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&si,&pi))return false;
-    DWORD wait=WaitForSingleObject(pi.hProcess,20000), code=1;
-    if(wait==WAIT_OBJECT_0)GetExitCodeProcess(pi.hProcess,&code);
-    else TerminateProcess(pi.hProcess,1);
-    CloseHandle(pi.hThread);CloseHandle(pi.hProcess);return wait==WAIT_OBJECT_0&&code==0;
+static bool RunRegisteredCleanerTask() {
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool uninitialize = SUCCEEDED(init);
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) return false;
+    ITaskService* service = nullptr; ITaskFolder* folder = nullptr;
+    IRegisteredTask* task = nullptr; IRunningTask* running = nullptr;
+    VARIANT empty; VariantInit(&empty);
+    HRESULT hr = CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ITaskService, reinterpret_cast<void**>(&service));
+    if (SUCCEEDED(hr)) hr = service->Connect(empty, empty, empty, empty);
+    BSTR root = SysAllocString(L"\\");
+    BSTR name = SysAllocString((L"N-Lite Cleaner " + gUserSid).c_str());
+    if (SUCCEEDED(hr) && root) hr = service->GetFolder(root, &folder);
+    else if (SUCCEEDED(hr)) hr = E_OUTOFMEMORY;
+    if (SUCCEEDED(hr) && name) hr = folder->GetTask(name, &task);
+    else if (SUCCEEDED(hr)) hr = E_OUTOFMEMORY;
+    if (SUCCEEDED(hr)) hr = task->Run(empty, &running);
+#ifdef NLITE_CLEANER_TEST_DIAGNOSTICS
+    std::wcerr << L"Task dispatch hr=" << static_cast<unsigned long>(hr) << std::endl;
+#endif
+    if (root) SysFreeString(root); if (name) SysFreeString(name);
+    ReleaseCleanerCom(running); ReleaseCleanerCom(task); ReleaseCleanerCom(folder); ReleaseCleanerCom(service);
+    if (uninitialize) CoUninitialize();
+    return SUCCEEDED(hr);
 }
+
 static HICON MakeIcon() {
     HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen);
     HBITMAP color = CreateCompatibleBitmap(screen, 32, 32), mask = CreateBitmap(32, 32, 1, 1, nullptr);
@@ -915,7 +929,8 @@ static std::wstring PackagedCleanerPath() {
 }
 static bool RequestCleanerTaskRun(bool manual);
 static bool StartCleanerSetup(bool forAuto, bool forManual) {
-    if (ShouldBlockCleanerSetupRetry(gCleanerSetupBlocked, forManual)) {
+    if (ShouldBlockCleanerSetupRetry(gCleanerSetupBlocked, forManual) &&
+        !(gCleanerSetupProcess && WaitForSingleObject(gCleanerSetupProcess, 0) == WAIT_TIMEOUT)) {
         return false;
     }
     gCleanerSetupForAuto = gCleanerSetupForAuto || forAuto;
@@ -1006,8 +1021,7 @@ static bool RequestCleanerTaskRun(bool manual) {
         }
         return false;
     }
-    const std::wstring task = L"N-Lite Cleaner " + gUserSid;
-    if (!RunSchtasks({L"/Run", L"/TN", task})) {
+    if (!RunRegisteredCleanerTask()) {
         gStatus = L"Ready";
         if (manual) {
             gManualCleanerPending = false;
@@ -1767,6 +1781,8 @@ static void SaveToggleAuto() {
     SaveSettings();
     if(gCleanerTaskUsable)
         RequestCleanerTaskRun(false);
+    else if(gCleanerSetupProcess && WaitForSingleObject(gCleanerSetupProcess,0)==WAIT_TIMEOUT)
+        StartCleanerSetup(true,false);
     else if(!ShouldPromptCleanerSetup(false,gCleanerSetupBlocked,false))
         DisableAutoCleanAfterSetupFailure(true);
     else StartCleanerSetup(true,false);
