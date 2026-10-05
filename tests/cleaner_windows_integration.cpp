@@ -10,7 +10,6 @@ static BOOL WINAPI RejectElevation(SHELLEXECUTEINFOW*) {
     ++elevationAttempts; SetLastError(ERROR_CANCELLED); return FALSE;
 }
 static unsigned trayBalloonCount = 0;
-static std::wstring trayBalloonTitle, trayBalloonText;
 static BOOL WINAPI CaptureTrayNotification(DWORD, PNOTIFYICONDATAW);
 static std::wstring startupDialogSelection;
 static BOOL WINAPI CaptureStartupFile(LPOPENFILENAMEW);
@@ -32,8 +31,6 @@ static bool ReadSyntheticCleanerStatus(CleanerStatus& status) {
 static BOOL WINAPI CaptureTrayNotification(DWORD action, PNOTIFYICONDATAW notification) {
     if (action == NIM_MODIFY && notification && (notification->uFlags & NIF_INFO)) {
         ++trayBalloonCount;
-        trayBalloonTitle = notification->szInfoTitle;
-        trayBalloonText = notification->szInfo;
     }
     return TRUE;
 }
@@ -151,10 +148,8 @@ static int StartupUiTest() {
         syntheticCleanerStatus.autoStandbyAfter = 64ull * 1024 * 1024;
         gCleanerStatusReaderForTests = ReadSyntheticCleanerStatus;
         WndProc(controller, WM_TIMER, TIMER_REFRESH, 0);
-        ok &= Check(trayBalloonCount == 1 && trayBalloonTitle == L"N-Lite" &&
-            trayBalloonText.find(L"Auto clean succeeded:") == 0 &&
-            trayBalloonText.find(L"64.0 MB") != std::wstring::npos,
-            "hidden tray reports the helper's verified auto-clean before/after result");
+        ok &= Check(trayBalloonCount == 0,
+            "automatic clean does not send an unnecessary tray notification");
 
         gCleanerStatus = CleanerStatus{};
         gCleanerStatus.standbyValid = true;
@@ -168,9 +163,8 @@ static int StartupUiTest() {
         syntheticCleanerStatus.autoStandbyCaptured = true;
         trayBalloonCount = 0;
         WndProc(controller, WM_TIMER, TIMER_REFRESH, 0);
-        ok &= Check(trayBalloonCount == 1 &&
-            trayBalloonText.find(L"Auto clean failed: standby size unchanged") == 0,
-            "hidden tray does not report unrelated standby changes as a clean success");
+        ok &= Check(trayBalloonCount == 0,
+            "automatic clean failure does not send a tray notification");
 
         gCleanerStatus.lastAutoTick = 300;
         gLastSeenPurgeTick = 300;
@@ -183,9 +177,8 @@ static int StartupUiTest() {
         syntheticCleanerStatus.autoStandbyAfter = 0;
         trayBalloonCount = 0;
         WndProc(controller, WM_TIMER, TIMER_REFRESH, 0);
-        ok &= Check(trayBalloonCount == 1 &&
-            trayBalloonText.find(L"Auto clean failed: standby size unchanged or unavailable") == 0,
-            "hidden tray treats an unavailable auto-clean measurement as unverifiable");
+        ok &= Check(trayBalloonCount == 0,
+            "unverified automatic clean does not send a tray notification");
         gCleanerStatusReaderForTests = nullptr;
         gCleanerTaskUsable = oldTaskUsable;
         gTrayAdded = false;

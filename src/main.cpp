@@ -53,10 +53,10 @@ static constexpr WORD IDI_NLITE = 101;
 #pragma comment(lib, "comdlg32.lib")
 
 #ifndef NLITE_VERSION
-#define NLITE_VERSION "0.2.15"
+#define NLITE_VERSION "0.2.16"
 #endif
 #ifndef NLITE_CLEANER_VERSION
-#define NLITE_CLEANER_VERSION "5"
+#define NLITE_CLEANER_VERSION "6"
 #endif
 #define NLITE_WIDEN2(x) L##x
 #define NLITE_WIDEN(x) NLITE_WIDEN2(x)
@@ -1124,28 +1124,6 @@ static void PollCleanerStatus() {
     }
     if (latest.lastAutoTick && latest.lastAutoTick != gLastSeenPurgeTick) {
         gLastSeenPurgeTick = latest.lastAutoTick;
-        const bool sizesKnown = latest.autoStandbyCaptured ? latest.autoStandbyValid :
-            (previous.standbyValid && latest.standbyValid);
-        const uint64_t before = latest.autoStandbyCaptured ?
-            latest.autoStandbyBefore : previous.standbyBytes;
-        const uint64_t after = latest.autoStandbyCaptured ?
-            latest.autoStandbyAfter : latest.standbyBytes;
-        const bool reduced = sizesKnown && StandbyCleanSucceeded(
-            static_cast<LONG>(latest.lastAutoStatus), before, after, gPageSize);
-        if (reduced) {
-            const std::wstring message = L"Auto clean succeeded: " +
-                Bytes(static_cast<double>(before - after)) + L" freed";
-            gStatus = message;
-            ShowCleanerNotification(message, CleanerNoticeKind::Success);
-        } else if (IsNtOk(static_cast<LONG>(latest.lastAutoStatus))) {
-            gStatus = L"Automatic standby cleaning did not reduce standby memory.";
-            ShowCleanerNotification(L"Auto clean failed: standby size unchanged or unavailable",
-                CleanerNoticeKind::Failure);
-        } else {
-            gStatus = L"Automatic standby cleaning was denied by Windows.";
-            ShowCleanerNotification(L"Auto clean failed: Windows rejected the request",
-                CleanerNoticeKind::Failure);
-        }
     }
 }
 static void DoPurge() {
@@ -1569,7 +1547,7 @@ static void DrawMemory(HDC dc, int cw, int ch) {
     Txt(dc,gThresholdFocus?gThresholdEdit:std::to_wstring(gThresholdMB),threshold.left+12,threshold.top, W(threshold)-20,H(threshold),C_TEXT,gFontMed,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
     AddHit(threshold,ID_THRESHOLD_FIELD);
 
-    Txt(dc,L"Automatic check",clean.left+cleanPad,clean.top+119,innerW,17,C_MUTED,gFontSmall);
+    Txt(dc,L"Repeat clean interval",clean.left+cleanPad,clean.top+119,innerW,17,C_MUTED,gFontSmall);
     RECT interval=R(clean.left+cleanPad,clean.top+139,innerW,35);
     Round(dc,interval,C_FIELD,gIntervalOpen?C_ACCENT:C_LINE,8);
     Txt(dc,L"Every "+IntervalLabel(gIntervalSec),interval.left+12,interval.top,W(interval)-42,H(interval),C_TEXT,gFont,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
@@ -1586,6 +1564,12 @@ static void DrawMemory(HDC dc, int cw, int ch) {
         RECT notice = R(clean.left+cleanPad,clean.top+222,innerW,22);
         Round(dc,notice,C_PANEL2,C_LINE,8);
         Txt(dc,gCleanerNotification,notice.left+9,notice.top,W(notice)-18,H(notice),noticeColor,gFontSmall);
+    } else {
+        const std::wstring cleanerStatus=AutoCleanStatusText(gAutoPurge,gCleanerTaskUsable,
+            gCleanerStatus.standbyValid,gCleanerStatus.standbyBytes,gThresholdMB,now,
+            gCleanerStatus.lastAutoTick,gIntervalSec);
+        Txt(dc,cleanerStatus,clean.left+cleanPad,clean.top+222,innerW,22,C_MUTED,gFontSmall,
+            DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
     }
 
     DrawButton(dc,R(clean.left+cleanPad,clean.top+251,innerW,38),L"Clean now",ID_PURGE,C_ACCENT,RGB(255,255,255),true);
@@ -1648,7 +1632,8 @@ static void DrawStartup(HDC dc,int cw,int ch) {
             if(item.canToggle)DrawSwitch(dc,R(rr.right-91,rr.top+15,52,29),item.enabled,ID_STARTUP_TOGGLE,static_cast<DWORD>(index));
             else {
                 const wchar_t* label=item.kind==StartupKind::WindowsShell||IsProtectedStartupTaskPath(item.taskPath)?L"Windows":
-                    item.kind==StartupKind::ScheduledTask?L"Managed":
+                    (item.kind==StartupKind::ScheduledTask||item.kind==StartupKind::UserRun||
+                     item.kind==StartupKind::UserRunOnce||item.kind==StartupKind::UserFolder)?L"Read-only":
                     (item.enabled?L"All users":L"Disabled");
                 Txt(dc,label,rr.right-98,rr.top+15,60,29,C_MUTED,gFontSmall,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
             }
@@ -1877,14 +1862,14 @@ static void HandleClick(int x,int y,bool dbl) {
             ok=SetStartupItemEnabled(item,next);
             if(ok&&ownStartup)gAutoStart=next;
             if(ok){gStatus=next?L"Startup app enabled.":L"Startup app disabled.";RefreshStartupEntries();}
-            else gStatus=L"Could not change that startup item.";
+            else {item.canToggle=false;gStatus=L"Windows denied that change. Refresh to check it again.";}
         }
     }
     else if(id==ID_STARTUP_DELETE){
         const size_t index=target->data;
         if(index<gStartupEntries.size()){
             if(DeleteStartupItem(gStartupEntries[index])){gStatus=L"Startup entry deleted.";RefreshStartupEntries();}
-            else gStatus=L"Could not delete that startup entry.";
+            else {gStartupEntries[index].canDelete=false;gStatus=L"Windows denied deletion. Refresh to check it again.";}
         }
     }
     else if(id==ID_TIMER_TOGGLE){

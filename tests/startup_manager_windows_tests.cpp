@@ -102,12 +102,16 @@ bool CreateDisabledStartupTask(const std::wstring& name, std::wstring& path) {
     }
     BSTR taskName = SysAllocString(name.c_str());
     VARIANT user; VariantInit(&user); user.vt = VT_BSTR; user.bstrVal = SysAllocString(sid.c_str());
+    VARIANT security; VariantInit(&security); security.vt = VT_BSTR;
+    const std::wstring sddlText=L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;"+sid+L")";
+    security.bstrVal=SysAllocString(sddlText.c_str());
     if (SUCCEEDED(hr) && taskName && user.bstrVal)
         hr = root->RegisterTaskDefinition(taskName, definition, TASK_CREATE_OR_UPDATE,
-            user, empty, TASK_LOGON_INTERACTIVE_TOKEN, empty, &registered);
+            user, empty, TASK_LOGON_INTERACTIVE_TOKEN, security, &registered);
     else if (SUCCEEDED(hr)) hr = E_OUTOFMEMORY;
     if (SUCCEEDED(hr)) path = L"\\" + name;
     VariantClear(&user);
+    VariantClear(&security);
     if (taskName) SysFreeString(taskName);
     if (rootPath) SysFreeString(rootPath);
     Release(registered); Release(exec); Release(action); Release(actions);
@@ -270,8 +274,8 @@ int main() {
         };
         StartupItem task;
         const bool listed=findTask(task);
-        ok &= Check(listed&&!task.enabled&&task.canToggle,
-            "disabled_startup_task_stays_toggleable_after_refresh");
+        ok &= Check(listed&&!task.enabled&&task.canToggle&&task.canDelete,
+            "disabled_startup_task_controls_match_its_current_user_access");
         if(listed&&task.canToggle){
             ok &= Check(SetStartupItemEnabled(task,true),"disabled_startup_task_can_be_enabled");
             StartupItem enabledTask;

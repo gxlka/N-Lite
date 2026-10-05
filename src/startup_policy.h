@@ -60,10 +60,10 @@ inline bool IsStartupTaskTriggerType(int type) {
 }
 
 inline bool StartupTaskCanBeToggled(bool hasStartupTrigger, bool onlyStartupTriggers,
-                                    bool currentUserOwned, bool protectedTask,
-                                    bool canRestoreDisabledTrigger) {
-    return hasStartupTrigger && onlyStartupTriggers && currentUserOwned && !protectedTask &&
-        canRestoreDisabledTrigger;
+                                    bool protectedTask, bool canRestoreDisabledTrigger,
+                                    bool hasWriteAccess, bool canUpdateTaskDefinition) {
+    return hasStartupTrigger && onlyStartupTriggers && !protectedTask &&
+        canRestoreDisabledTrigger && hasWriteAccess && canUpdateTaskDefinition;
 }
 
 inline bool IsProtectedStartupTaskPath(const std::wstring& path) {
@@ -75,8 +75,9 @@ inline bool IsProtectedStartupTaskPath(const std::wstring& path) {
     return path.size() == prefixLength || path[prefixLength] == L'\\';
 }
 
-inline bool StartupEntryCanBeDeleted(bool currentUserOwned, bool protectedSource) {
-    return currentUserOwned && !protectedSource;
+inline bool StartupTaskCanBeDeleted(bool onlyStartupTriggers, bool protectedSource,
+                                    bool hasDeleteAccess) {
+    return onlyStartupTriggers && !protectedSource && hasDeleteAccess;
 }
 
 inline bool StartupEntryPriorityBefore(bool leftIsWindowsShell, bool rightIsWindowsShell) {

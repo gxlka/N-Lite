@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.15"
+  #define MyAppVersion "0.2.16"
 #endif
 
 #define MyAppName "N-Lite"
@@ -65,7 +65,7 @@ begin
        (ExitCode = 0) then
       RegWriteDWordValue(HKCU, 'Software\N-Lite', 'CleanerSetupBlockedVersion', 0)
     else
-      RegWriteDWordValue(HKCU, 'Software\N-Lite', 'CleanerSetupBlockedVersion', 5);
+      RegWriteDWordValue(HKCU, 'Software\N-Lite', 'CleanerSetupBlockedVersion', 6);
   end;
 end;
 

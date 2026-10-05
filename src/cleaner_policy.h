@@ -397,30 +397,49 @@ inline bool StandbyCleanSucceeded(int32_t status, uint64_t beforeBytes, uint64_t
         (pageSize == 0 || beforeBytes - afterBytes >= pageSize);
 }
 
-inline bool AutoCleanNeedsRetry(int32_t status, bool afterValid, uint64_t beforeBytes,
-                                uint64_t afterBytes, uint64_t pageSize) {
-    return !afterValid || !StandbyCleanSucceeded(status, beforeBytes, afterBytes, pageSize);
-}
-
-inline bool AutoCleanShouldRemainArmedAfterRun(int32_t status, bool afterValid,
-                                               uint64_t beforeBytes, uint64_t afterBytes,
-                                               uint64_t pageSize, uint64_t thresholdBytes) {
-    return AutoCleanNeedsRetry(status, afterValid, beforeBytes, afterBytes, pageSize) ||
-        (afterValid && afterBytes < thresholdBytes);
-}
-
 inline bool ManualRequestCompleted(uint64_t requestId, uint64_t completedRequestId) {
     return requestId != 0 && completedRequestId >= requestId;
 }
 
 inline bool ShouldRunAutoClean(const CleanerSettings& settings, uint64_t standbyBytes,
-                               uint64_t nowTick, uint64_t lastTick, bool armed) {
-    if (!settings.enabled || !armed || settings.thresholdMb < 64 || settings.thresholdMb > 131072 ||
+                               uint64_t nowTick, uint64_t lastTick) {
+    if (!settings.enabled || settings.thresholdMb < 64 || settings.thresholdMb > 131072 ||
         settings.intervalSeconds < 60 || settings.intervalSeconds > 7200) return false;
     const uint64_t threshold = static_cast<uint64_t>(settings.thresholdMb) * 1024u * 1024u;
     if (standbyBytes < threshold) return false;
     return lastTick == 0 || nowTick < lastTick || nowTick - lastTick >=
         static_cast<uint64_t>(settings.intervalSeconds) * 1000u;
+}
+
+inline uint64_t AutoCleanIntervalRemainingSeconds(uint64_t nowTick, uint64_t lastTick,
+                                                   uint32_t intervalSeconds) {
+    if (!lastTick || nowTick < lastTick || !intervalSeconds) return 0;
+    const uint64_t elapsed = nowTick - lastTick;
+    const uint64_t intervalMs = static_cast<uint64_t>(intervalSeconds) * 1000u;
+    if (elapsed >= intervalMs) return 0;
+    return (intervalMs - elapsed + 999u) / 1000u;
+}
+
+inline std::wstring AutoCleanStatusText(bool enabled, bool taskReady, bool standbyValid,
+                                        uint64_t standbyBytes, uint32_t thresholdMb,
+                                        uint64_t nowTick, uint64_t lastAutoTick,
+                                        uint32_t intervalSeconds) {
+    if (!enabled) return L"Auto clean is off.";
+    if (!taskReady) return L"Cleaner task unavailable.";
+    if (!standbyValid) return L"Waiting for standby measurement.";
+    const uint64_t threshold = static_cast<uint64_t>(thresholdMb) * 1024u * 1024u;
+    if (standbyBytes < threshold) return L"Below threshold; checks every minute.";
+    const uint64_t remaining = AutoCleanIntervalRemainingSeconds(
+        nowTick, lastAutoTick, intervalSeconds);
+    if (remaining >= 60) {
+        const uint64_t minutes = (remaining + 59u) / 60u;
+        return L"Next clean eligible in " + std::to_wstring(minutes) +
+            (minutes == 1 ? L" min; checks every minute." : L" mins; checks every minute.");
+    }
+    if (remaining) {
+        return L"Next clean eligible in " + std::to_wstring(remaining) + L" sec.";
+    }
+    return L"Eligible; next check within one minute.";
 }
 
 inline constexpr bool kAutoCleanDefaultEnabled = false;
