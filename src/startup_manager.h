@@ -1,6 +1,9 @@
 #pragma once
 
 #include <windows.h>
+#ifdef NLITE_STARTUP_TESTING
+#include <commdlg.h>
+#endif
 #include <string>
 #include <vector>
 
@@ -23,3 +26,7 @@ std::vector<StartupItem> EnumerateStartupItems();
 bool SetStartupItemEnabled(StartupItem& item, bool enabled);
 bool DeleteStartupItem(StartupItem& item);
 bool AddStartupApplication(HWND owner, std::wstring& addedName);
+#ifdef NLITE_STARTUP_TESTING
+using StartupFilePickerForTesting = BOOL (WINAPI *)(LPOPENFILENAMEW);
+void SetStartupFilePickerForTesting(StartupFilePickerForTesting picker);
+#endif

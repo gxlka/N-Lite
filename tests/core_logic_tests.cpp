@@ -117,6 +117,20 @@ int main() {
         !StandbyCleanSucceeded(0, 16 * 1024 * 1024, 16 * 1024 * 1024, 4096) &&
         !StandbyCleanSucceeded(static_cast<int32_t>(0xC0000061u), 16 * 1024 * 1024, 2 * 1024 * 1024, 4096),
         "standby_clean_succeeds_only_when_windows_succeeds_and_size_drops");
+    Check(AutoCleanNeedsRetry(0, true, 16 * 1024 * 1024, 16 * 1024 * 1024, 4096) &&
+        AutoCleanNeedsRetry(static_cast<int32_t>(0xC0000061u), true, 16 * 1024 * 1024, 2 * 1024 * 1024, 4096) &&
+        AutoCleanNeedsRetry(0, false, 16 * 1024 * 1024, 0, 4096) &&
+        !AutoCleanNeedsRetry(0, true, 16 * 1024 * 1024, 2 * 1024 * 1024, 4096),
+        "automatic_cleaner_retries_until_a_standby_reduction_is_verified");
+    Check(AutoCleanShouldRemainArmedAfterRun(0, true, 16 * 1024 * 1024,
+            2 * 1024 * 1024, 4096, 4 * 1024 * 1024) &&
+        !AutoCleanShouldRemainArmedAfterRun(0, true, 16 * 1024 * 1024,
+            8 * 1024 * 1024, 4096, 4 * 1024 * 1024) &&
+        AutoCleanShouldRemainArmedAfterRun(0, false, 16 * 1024 * 1024,
+            0, 4096, 4 * 1024 * 1024) &&
+        AutoCleanShouldRemainArmedAfterRun(static_cast<int32_t>(0xC0000061u), true,
+            16 * 1024 * 1024, 2 * 1024 * 1024, 4096, 4 * 1024 * 1024),
+        "automatic_cleaner_rearms_immediately_when_a_verified_purge_falls_below_threshold");
     const std::vector<uint8_t> approvalEnabled{2, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     const std::vector<uint8_t> approvalDisabled{3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
     Check(ParseStartupApprovalState(approvalEnabled) == StartupApprovalState::Enabled &&
@@ -134,6 +148,14 @@ int main() {
     Check(IsStartupTaskTriggerType(8) && IsStartupTaskTriggerType(9) &&
         !IsStartupTaskTriggerType(2),
         "only_boot_and_logon_tasks_count_as_startup");
+    Check(StartupTaskCanBeToggled(true, true, true, false, true),
+        "disabled_startup_task_keeps_an_enable_control");
+    Check(!StartupTaskCanBeToggled(false, true, true, false, true) &&
+        !StartupTaskCanBeToggled(true, false, true, false, true) &&
+        !StartupTaskCanBeToggled(true, true, false, false, true) &&
+        !StartupTaskCanBeToggled(true, true, true, true, true) &&
+        !StartupTaskCanBeToggled(true, true, true, false, false),
+        "startup_task_controls_stay_limited_to_owned_startup_tasks");
     Check(IsProtectedStartupTaskPath(L"\\Microsoft\\Windows\\UpdateOrchestrator") &&
         !IsProtectedStartupTaskPath(L"\\Vendor\\Updater") &&
         StartupEntryCanBeDeleted(true, false) && !StartupEntryCanBeDeleted(false, false) &&
@@ -236,14 +258,39 @@ int main() {
     standbyStatus.manualStandbyValid = true;
     standbyStatus.manualStandbyBefore = 80u * 1024u * 1024u;
     standbyStatus.manualStandbyAfter = 4u * 1024u * 1024u;
+    standbyStatus.autoStandbyCaptured = true;
+    standbyStatus.autoStandbyValid = true;
+    standbyStatus.autoStandbyBefore = 96u * 1024u * 1024u;
+    standbyStatus.autoStandbyAfter = 8u * 1024u * 1024u;
     CleanerStatus parsedStandbyStatus;
     Check(ParseCleanerStatus(SerializeCleanerStatus(standbyStatus), parsedStandbyStatus) &&
         parsedStandbyStatus.standbyValid && parsedStandbyStatus.standbyBytes == standbyStatus.standbyBytes &&
         parsedStandbyStatus.standbyTick == standbyStatus.standbyTick &&
         parsedStandbyStatus.manualStandbyValid &&
         parsedStandbyStatus.manualStandbyBefore == standbyStatus.manualStandbyBefore &&
-        parsedStandbyStatus.manualStandbyAfter == standbyStatus.manualStandbyAfter,
-        "cleaner_status_round_trip_preserves_system_standby_measurements");
+        parsedStandbyStatus.manualStandbyAfter == standbyStatus.manualStandbyAfter &&
+        parsedStandbyStatus.autoStandbyCaptured &&
+        parsedStandbyStatus.autoStandbyValid &&
+        parsedStandbyStatus.autoStandbyBefore == standbyStatus.autoStandbyBefore &&
+        parsedStandbyStatus.autoStandbyAfter == standbyStatus.autoStandbyAfter,
+        "cleaner_status_round_trip_preserves_manual_and_auto_standby_measurements");
+    CleanerStatus unavailableAutoStatus;
+    unavailableAutoStatus.lastAutoTick = 42;
+    unavailableAutoStatus.autoStandbyCaptured = true;
+    unavailableAutoStatus.autoStandbyBefore = 64u * 1024u * 1024u;
+    CleanerStatus parsedUnavailableAutoStatus;
+    Check(ParseCleanerStatus(SerializeCleanerStatus(unavailableAutoStatus), parsedUnavailableAutoStatus) &&
+        parsedUnavailableAutoStatus.lastAutoTick == 42 && parsedUnavailableAutoStatus.autoStandbyCaptured &&
+        !parsedUnavailableAutoStatus.autoStandbyValid,
+        "cleaner_status_distinguishes_missing_auto_measurement_from_legacy_status");
+    CleanerStatus versionTwoStatus;
+    Check(ParseCleanerStatus(L"version=2\nhelper_version=5\ncompleted_manual_request_id=0\n"
+            L"last_manual_status=0\nlast_auto_tick=10\nlast_auto_status=0\nauto_armed=1\n"
+            L"standby_valid=1\nstandby_bytes=4096\nstandby_tick=11\n"
+            L"manual_standby_valid=0\nmanual_standby_before=0\nmanual_standby_after=0\n",
+            versionTwoStatus) && versionTwoStatus.standbyValid &&
+        !versionTwoStatus.autoStandbyCaptured && !versionTwoStatus.autoStandbyValid,
+        "new_app_reads_version_two_cleaner_status_without_auto_measurements");
     CleanerStatus legacyStatus;
     Check(ParseCleanerStatus(L"version=1\nhelper_version=1\ncompleted_manual_request_id=0\n"
             L"last_manual_status=0\nlast_auto_tick=0\nlast_auto_status=0\nauto_armed=1\n", legacyStatus) &&
@@ -259,11 +306,11 @@ int main() {
     settings.intervalSeconds = 60;
     const uint64_t thresholdBytes = uint64_t{64} * 1024 * 1024;
     Check(ShouldRunAutoClean(settings, thresholdBytes, 120000, 60000, true),
-        "auto_clean_requires_threshold_armed_and_elapsed_interval");
+        "auto_clean_requires_enabled_threshold_and_elapsed_interval");
     Check(!ShouldRunAutoClean(settings, thresholdBytes - 1, 120000, 60000, true),
         "below_threshold_does_not_auto_clean");
     Check(!ShouldRunAutoClean(settings, thresholdBytes, 120000, 60000, false),
-        "unarmed_auto_clean_does_not_repeat");
+        "auto_clean_waits_for_threshold_to_rearm_after_a_verified_clean");
     Check(!ShouldRunAutoClean(settings, thresholdBytes, 119999, 60000, true),
         "auto_clean_waits_for_interval");
     Check(ManualRequestCompleted(7, 7) && !ManualRequestCompleted(8, 7) && !ManualRequestCompleted(0, 7),

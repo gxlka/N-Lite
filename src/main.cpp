@@ -53,10 +53,10 @@ static constexpr WORD IDI_NLITE = 101;
 #pragma comment(lib, "comdlg32.lib")
 
 #ifndef NLITE_VERSION
-#define NLITE_VERSION "0.2.14"
+#define NLITE_VERSION "0.2.15"
 #endif
 #ifndef NLITE_CLEANER_VERSION
-#define NLITE_CLEANER_VERSION "4"
+#define NLITE_CLEANER_VERSION "5"
 #endif
 #define NLITE_WIDEN2(x) L##x
 #define NLITE_WIDEN(x) NLITE_WIDEN2(x)
@@ -147,6 +147,9 @@ static HANDLE gCleanerSetupProcess = nullptr;
 static uint64_t gCleanerRequestId = 0;
 static uint64_t gLastDisplayedManualRequestId = 0;
 static CleanerStatus gCleanerStatus;
+#ifdef NLITE_CLEANER_TEST_DIAGNOSTICS
+static bool (*gCleanerStatusReaderForTests)(CleanerStatus&) = nullptr;
+#endif
 static bool gManualCleanerPending = false;
 static uint64_t gManualStandbyBefore = 0;
 static bool gManualStandbyBeforeKnown = false;
@@ -167,6 +170,19 @@ static void ShowCleanerNotification(const std::wstring& message, CleanerNoticeKi
     gCleanerNotification = message;
     gCleanerNotificationKind = kind;
     gCleanerNotificationUntil = GetTickCount64() + 6000;
+    if (gWnd && gTrayAdded && !IsWindowVisible(gWnd)) {
+        NOTIFYICONDATAW notification{};
+        notification.cbSize = sizeof(notification);
+        notification.hWnd = gWnd;
+        notification.uID = 1;
+        notification.uFlags = NIF_INFO;
+        wcscpy_s(notification.szInfoTitle, L"N-Lite");
+        wcsncpy_s(notification.szInfo, _countof(notification.szInfo), message.c_str(), _TRUNCATE);
+        notification.dwInfoFlags = kind == CleanerNoticeKind::Failure ? NIIF_WARNING :
+            (kind == CleanerNoticeKind::Success ? NIIF_INFO : NIIF_NONE);
+        notification.uTimeout = 5000;
+        Shell_NotifyIconW(NIM_MODIFY, &notification);
+    }
     if (gWnd) InvalidateRect(gWnd, nullptr, FALSE);
 }
 
@@ -562,6 +578,9 @@ static bool WriteCleanerSettings() {
     return true;
 }
 static bool ReadCleanerStatus(CleanerStatus& status) {
+#ifdef NLITE_CLEANER_TEST_DIAGNOSTICS
+    if (gCleanerStatusReaderForTests) return gCleanerStatusReaderForTests(status);
+#endif
     std::wstring text;
     return ReadCleanerText(CleanerStatusFile(), text) && ParseCleanerStatus(text, status);
 }
@@ -1065,6 +1084,7 @@ static void PollCleanerStatus() {
     if (!gCleanerTaskUsable) return;
     CleanerStatus latest;
     if (!ReadCleanerStatus(latest)) return;
+    const CleanerStatus previous = gCleanerStatus;
     gCleanerStatus = latest;
     if (latest.completedManualRequestId > gLastDisplayedManualRequestId &&
         latest.completedManualRequestId >= gCleanerRequestId) {
@@ -1104,8 +1124,28 @@ static void PollCleanerStatus() {
     }
     if (latest.lastAutoTick && latest.lastAutoTick != gLastSeenPurgeTick) {
         gLastSeenPurgeTick = latest.lastAutoTick;
-        gStatus = IsNtOk(static_cast<LONG>(latest.lastAutoStatus)) ?
-            L"Automatic standby cleaning finished." : L"Automatic standby cleaning was denied by Windows.";
+        const bool sizesKnown = latest.autoStandbyCaptured ? latest.autoStandbyValid :
+            (previous.standbyValid && latest.standbyValid);
+        const uint64_t before = latest.autoStandbyCaptured ?
+            latest.autoStandbyBefore : previous.standbyBytes;
+        const uint64_t after = latest.autoStandbyCaptured ?
+            latest.autoStandbyAfter : latest.standbyBytes;
+        const bool reduced = sizesKnown && StandbyCleanSucceeded(
+            static_cast<LONG>(latest.lastAutoStatus), before, after, gPageSize);
+        if (reduced) {
+            const std::wstring message = L"Auto clean succeeded: " +
+                Bytes(static_cast<double>(before - after)) + L" freed";
+            gStatus = message;
+            ShowCleanerNotification(message, CleanerNoticeKind::Success);
+        } else if (IsNtOk(static_cast<LONG>(latest.lastAutoStatus))) {
+            gStatus = L"Automatic standby cleaning did not reduce standby memory.";
+            ShowCleanerNotification(L"Auto clean failed: standby size unchanged or unavailable",
+                CleanerNoticeKind::Failure);
+        } else {
+            gStatus = L"Automatic standby cleaning was denied by Windows.";
+            ShowCleanerNotification(L"Auto clean failed: Windows rejected the request",
+                CleanerNoticeKind::Failure);
+        }
     }
 }
 static void DoPurge() {

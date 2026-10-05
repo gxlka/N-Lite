@@ -1,8 +1,13 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <sddl.h>
+#include <taskschd.h>
+#include <oleauto.h>
 
+#include <algorithm>
 #include <iostream>
+#include <string>
 #include <vector>
 
 #include "startup_manager.h"
@@ -33,6 +38,129 @@ bool ReadApproval(const wchar_t* keyPath, const wchar_t* valueName,
     }
     RegCloseKey(key);
     return result == ERROR_SUCCESS && type == REG_BINARY;
+}
+
+template <typename T> void Release(T*& value) {
+    if (value) { value->Release(); value = nullptr; }
+}
+
+bool CurrentSid(std::wstring& sid) {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    DWORD bytes = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &bytes);
+    std::vector<BYTE> buffer(bytes);
+    bool ok = bytes && GetTokenInformation(token, TokenUser, buffer.data(), bytes, &bytes);
+    if (ok) {
+        LPWSTR text = nullptr;
+        ok = ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(buffer.data())->User.Sid, &text) != FALSE;
+        if (ok) { sid = text; LocalFree(text); }
+    }
+    CloseHandle(token);
+    return ok;
+}
+
+bool CreateDisabledStartupTask(const std::wstring& name, std::wstring& path) {
+    std::wstring sid;
+    if (!CurrentSid(sid)) return false;
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool uninitialize = SUCCEEDED(init);
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) return false;
+    ITaskService* service = nullptr; ITaskFolder* root = nullptr;
+    ITaskDefinition* definition = nullptr; IPrincipal* principal = nullptr;
+    ITriggerCollection* triggers = nullptr; ITrigger* trigger = nullptr;
+    IActionCollection* actions = nullptr; IAction* action = nullptr;
+    IExecAction* exec = nullptr; IRegisteredTask* registered = nullptr;
+    VARIANT empty; VariantInit(&empty);
+    HRESULT hr = CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ITaskService, reinterpret_cast<void**>(&service));
+    if (SUCCEEDED(hr)) hr = service->Connect(empty, empty, empty, empty);
+    BSTR rootPath = SysAllocString(L"\\");
+    if (SUCCEEDED(hr) && rootPath) hr = service->GetFolder(rootPath, &root);
+    else if (SUCCEEDED(hr)) hr = E_OUTOFMEMORY;
+    if (SUCCEEDED(hr)) hr = service->NewTask(0, &definition);
+    if (SUCCEEDED(hr)) hr = definition->get_Principal(&principal);
+    if (SUCCEEDED(hr)) {
+        BSTR user = SysAllocString(sid.c_str());
+        hr = user ? principal->put_UserId(user) : E_OUTOFMEMORY;
+        if (user) SysFreeString(user);
+        if (SUCCEEDED(hr)) hr = principal->put_LogonType(TASK_LOGON_INTERACTIVE_TOKEN);
+    }
+    if (SUCCEEDED(hr)) hr = definition->get_Triggers(&triggers);
+    if (SUCCEEDED(hr)) hr = triggers->Create(TASK_TRIGGER_LOGON, &trigger);
+    if (SUCCEEDED(hr)) hr = trigger->put_Enabled(VARIANT_FALSE);
+    if (SUCCEEDED(hr)) hr = definition->get_Actions(&actions);
+    if (SUCCEEDED(hr)) hr = actions->Create(TASK_ACTION_EXEC, &action);
+    if (SUCCEEDED(hr)) hr = action->QueryInterface(IID_IExecAction, reinterpret_cast<void**>(&exec));
+    if (SUCCEEDED(hr)) {
+        BSTR executable = SysAllocString(L"C:\\Windows\\System32\\cmd.exe");
+        BSTR arguments = SysAllocString(L"/c exit 0");
+        hr = executable ? exec->put_Path(executable) : E_OUTOFMEMORY;
+        if (SUCCEEDED(hr) && arguments) hr = exec->put_Arguments(arguments);
+        if (SUCCEEDED(hr) && !arguments) hr = E_OUTOFMEMORY;
+        SysFreeString(executable); SysFreeString(arguments);
+    }
+    BSTR taskName = SysAllocString(name.c_str());
+    VARIANT user; VariantInit(&user); user.vt = VT_BSTR; user.bstrVal = SysAllocString(sid.c_str());
+    if (SUCCEEDED(hr) && taskName && user.bstrVal)
+        hr = root->RegisterTaskDefinition(taskName, definition, TASK_CREATE_OR_UPDATE,
+            user, empty, TASK_LOGON_INTERACTIVE_TOKEN, empty, &registered);
+    else if (SUCCEEDED(hr)) hr = E_OUTOFMEMORY;
+    if (SUCCEEDED(hr)) path = L"\\" + name;
+    VariantClear(&user);
+    if (taskName) SysFreeString(taskName);
+    if (rootPath) SysFreeString(rootPath);
+    Release(registered); Release(exec); Release(action); Release(actions);
+    Release(trigger); Release(triggers); Release(principal); Release(definition);
+    Release(root); Release(service);
+    if (uninitialize) CoUninitialize();
+    return SUCCEEDED(hr);
+}
+
+void RemoveTestTask(const std::wstring& path) {
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool uninitialize = SUCCEEDED(init);
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) return;
+    ITaskService* service = nullptr; ITaskFolder* folder = nullptr;
+    VARIANT empty; VariantInit(&empty);
+    HRESULT hr = CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ITaskService, reinterpret_cast<void**>(&service));
+    if (SUCCEEDED(hr)) hr = service->Connect(empty, empty, empty, empty);
+    const size_t split = path.find_last_of(L'\\');
+    const std::wstring folderName = split == 0 ? L"\\" : path.substr(0, split);
+    const std::wstring name = split == std::wstring::npos ? L"" : path.substr(split + 1);
+    BSTR folderPath = SysAllocString(folderName.c_str()), taskName = SysAllocString(name.c_str());
+    if (SUCCEEDED(hr) && folderPath) hr = service->GetFolder(folderPath, &folder);
+    if (SUCCEEDED(hr) && folder && taskName) folder->DeleteTask(taskName, 0);
+    if (folderPath) SysFreeString(folderPath); if (taskName) SysFreeString(taskName);
+    Release(folder); Release(service);
+    if (uninitialize) CoUninitialize();
+}
+
+bool ReadTaskSecurityDescriptor(const std::wstring& path, std::wstring& descriptor) {
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool uninitialize = SUCCEEDED(init);
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) return false;
+    ITaskService* service = nullptr; ITaskFolder* folder = nullptr; IRegisteredTask* task = nullptr;
+    VARIANT empty; VariantInit(&empty);
+    HRESULT hr = CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ITaskService, reinterpret_cast<void**>(&service));
+    if (SUCCEEDED(hr)) hr = service->Connect(empty, empty, empty, empty);
+    const size_t split = path.find_last_of(L'\\');
+    const std::wstring folderName = split == 0 ? L"\\" : path.substr(0, split);
+    const std::wstring name = split == std::wstring::npos ? L"" : path.substr(split + 1);
+    BSTR folderPath = SysAllocString(folderName.c_str()), taskName = SysAllocString(name.c_str());
+    if (SUCCEEDED(hr) && folderPath) hr = service->GetFolder(folderPath, &folder);
+    if (SUCCEEDED(hr) && folder && taskName) hr = folder->GetTask(taskName, &task);
+    BSTR value = nullptr;
+    if (SUCCEEDED(hr)) hr = task->GetSecurityDescriptor(
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &value);
+    if (SUCCEEDED(hr) && value) descriptor.assign(value, SysStringLen(value));
+    if (value) SysFreeString(value);
+    if (folderPath) SysFreeString(folderPath); if (taskName) SysFreeString(taskName);
+    Release(task); Release(folder); Release(service);
+    if (uninitialize) CoUninitialize();
+    return SUCCEEDED(hr) && !descriptor.empty();
 }
 }
 
@@ -122,6 +250,42 @@ int main() {
     }
     if(RegOpenKeyExW(HKEY_CURRENT_USER,approvalPath,0,KEY_SET_VALUE|KEY_WOW64_64KEY,&approvalKey)==ERROR_SUCCESS){
         RegDeleteValueW(approvalKey,deleteValue);RegCloseKey(approvalKey);
+    }
+
+    const std::wstring taskName=L"N-Lite Startup Toggle Test "+
+        std::to_wstring(GetCurrentProcessId())+L" "+std::to_wstring(GetTickCount64());
+    std::wstring taskPath;
+    const bool taskCreated=CreateDisabledStartupTask(taskName,taskPath);
+    ok &= Check(taskCreated,"startup_task_test_creates_disabled_user_owned_task");
+    if(taskCreated){
+        std::wstring originalSecurity;
+        ok &= Check(ReadTaskSecurityDescriptor(taskPath,originalSecurity),
+            "disabled_startup_task_security_descriptor_is_readable");
+        auto findTask=[&](StartupItem& found){
+            const auto items=EnumerateStartupItems();
+            const auto it=std::find_if(items.begin(),items.end(),[&](const StartupItem& candidate){
+                return candidate.kind==StartupKind::ScheduledTask&&candidate.taskPath==taskPath;
+            });
+            if(it==items.end())return false;found=*it;return true;
+        };
+        StartupItem task;
+        const bool listed=findTask(task);
+        ok &= Check(listed&&!task.enabled&&task.canToggle,
+            "disabled_startup_task_stays_toggleable_after_refresh");
+        if(listed&&task.canToggle){
+            ok &= Check(SetStartupItemEnabled(task,true),"disabled_startup_task_can_be_enabled");
+            StartupItem enabledTask;
+            const bool enabledListed=findTask(enabledTask);
+            ok &= Check(enabledListed&&enabledTask.enabled&&enabledTask.canToggle,
+                "startup_task_and_boot_or_logon_trigger_enable_together");
+            std::wstring enabledSecurity;
+            ok &= Check(ReadTaskSecurityDescriptor(taskPath,enabledSecurity)&&enabledSecurity==originalSecurity,
+                "re_enabled_startup_task_preserves_its_security_descriptor");
+            if(enabledListed&&enabledTask.canDelete){
+                ok &= Check(DeleteStartupItem(enabledTask),"owned_startup_task_can_be_deleted");
+            }else ok &= Check(false,"owned_startup_task_can_be_deleted");
+        }
+        RemoveTestTask(taskPath);
     }
 
     RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\N-Lite\\StartupTests");

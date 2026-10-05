@@ -15,6 +15,16 @@
 #include "startup_manager.h"
 #include "startup_policy.h"
 
+#ifdef NLITE_STARTUP_TESTING
+namespace {
+StartupFilePickerForTesting gStartupFilePickerForTesting = nullptr;
+}
+
+void SetStartupFilePickerForTesting(StartupFilePickerForTesting picker) {
+    gStartupFilePickerForTesting = picker;
+}
+#endif
+
 namespace {
 const wchar_t* RunSubkey(StartupKind kind) {
     return kind==StartupKind::UserRun||kind==StartupKind::MachineRun?
@@ -280,13 +290,16 @@ void AddTasksInFolder(ITaskFolder* folder,std::vector<StartupItem>& items,unsign
                             item.command=TaskCommand(definition);
                             VARIANT_BOOL enabled=VARIANT_FALSE;task->get_Enabled(&enabled);
                             item.enabled=enabled==VARIANT_TRUE&&hasEnabledStartupTrigger;
-                            BSTR user=nullptr;IPrincipal* principal=nullptr;
+                            BSTR user=nullptr;IPrincipal* principal=nullptr;TASK_LOGON_TYPE logonType=TASK_LOGON_NONE;
                             if(SUCCEEDED(definition->get_Principal(&principal))&&principal){
-                                principal->get_UserId(&user);ReleaseCom(principal);
+                                principal->get_UserId(&user);principal->get_LogonType(&logonType);ReleaseCom(principal);
                             }
                             const bool currentUser=IsCurrentTaskPrincipal(BstrText(user));
                             const bool protectedTask=IsMicrosoftTaskPath(item.taskPath);
-                            item.canToggle=onlyStartup&&hasEnabledStartupTrigger&&!protectedTask&&currentUser;
+                            const bool canRestoreDisabledTrigger=hasEnabledStartupTrigger||
+                                logonType==TASK_LOGON_INTERACTIVE_TOKEN||logonType==TASK_LOGON_S4U;
+                            item.canToggle=StartupTaskCanBeToggled(startup,onlyStartup,currentUser,
+                                protectedTask,canRestoreDisabledTrigger);
                             item.canDelete=onlyStartup&&StartupEntryCanBeDeleted(currentUser,protectedTask);
                             SysFreeString(taskName);SysFreeString(taskPath);SysFreeString(user);
                             if(!item.taskPath.empty())items.push_back(std::move(item));
@@ -351,7 +364,63 @@ bool SetScheduledTaskEnabled(const std::wstring& taskPath,bool enabled) {
                 ITaskFolder* folder=nullptr;IRegisteredTask* task=nullptr;
                 if(folderBstr&&nameBstr&&SUCCEEDED(service->GetFolder(folderBstr,&folder))&&folder&&
                     SUCCEEDED(folder->GetTask(nameBstr,&task))&&task){
-                    ok=SUCCEEDED(task->put_Enabled(enabled?VARIANT_TRUE:VARIANT_FALSE));
+                    ITaskDefinition* definition=nullptr;ITriggerCollection* triggers=nullptr;
+                    if(SUCCEEDED(task->get_Definition(&definition))&&definition&&
+                        SUCCEEDED(definition->get_Triggers(&triggers))&&triggers){
+                        LONG count=0;triggers->get_Count(&count);
+                        bool hasStartup=false,hasEnabledStartup=false,onlyStartup=true;
+                        for(LONG i=1;i<=count;++i){
+                            ITrigger* trigger=nullptr;
+                            if(SUCCEEDED(triggers->get_Item(i,&trigger))&&trigger){
+                                TASK_TRIGGER_TYPE2 type{};trigger->get_Type(&type);
+                                if(IsStartupTaskTriggerType(static_cast<int>(type))){
+                                    hasStartup=true;VARIANT_BOOL triggerEnabled=VARIANT_FALSE;
+                                    if(SUCCEEDED(trigger->get_Enabled(&triggerEnabled))&&triggerEnabled==VARIANT_TRUE)
+                                        hasEnabledStartup=true;
+                                }else onlyStartup=false;
+                                ReleaseCom(trigger);
+                            }else onlyStartup=false;
+                        }
+                        ok=hasStartup&&onlyStartup;
+                        if(ok&&enabled&&!hasEnabledStartup){
+                            bool triggersEnabled=true;
+                            for(LONG i=1;i<=count&&ok;++i){
+                                ITrigger* trigger=nullptr;
+                                if(FAILED(triggers->get_Item(i,&trigger))||!trigger){triggersEnabled=false;break;}
+                                TASK_TRIGGER_TYPE2 type{};trigger->get_Type(&type);
+                                if(IsStartupTaskTriggerType(static_cast<int>(type))&&
+                                    FAILED(trigger->put_Enabled(VARIANT_TRUE)))triggersEnabled=false;
+                                ReleaseCom(trigger);
+                            }
+                            IPrincipal* principal=nullptr;BSTR user=nullptr,security=nullptr;
+                            TASK_LOGON_TYPE logonType=TASK_LOGON_NONE;IRegisteredTask* updatedTask=nullptr;
+                            HRESULT updateResult=triggersEnabled?S_OK:E_FAIL;
+                            if(SUCCEEDED(updateResult))updateResult=definition->get_Principal(&principal);
+                            if(SUCCEEDED(updateResult))updateResult=principal->get_UserId(&user);
+                            if(SUCCEEDED(updateResult))updateResult=principal->get_LogonType(&logonType);
+                            if(SUCCEEDED(updateResult)&&logonType!=TASK_LOGON_INTERACTIVE_TOKEN&&
+                                logonType!=TASK_LOGON_S4U)updateResult=E_ACCESSDENIED;
+                            if(SUCCEEDED(updateResult))updateResult=task->GetSecurityDescriptor(
+                                OWNER_SECURITY_INFORMATION|GROUP_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,
+                                &security);
+                            VARIANT userId,password,sddl;VariantInit(&userId);VariantInit(&password);VariantInit(&sddl);
+                            if(SUCCEEDED(updateResult)&&user&&security){
+                                userId.vt=VT_BSTR;userId.bstrVal=user;user=nullptr;
+                                sddl.vt=VT_BSTR;sddl.bstrVal=security;security=nullptr;
+                                updateResult=folder->RegisterTaskDefinition(nameBstr,definition,
+                                    TASK_UPDATE|TASK_DONT_ADD_PRINCIPAL_ACE,userId,password,logonType,sddl,&updatedTask);
+                            }else if(SUCCEEDED(updateResult))updateResult=E_ACCESSDENIED;
+                            if(SUCCEEDED(updateResult)&&updatedTask)
+                                updateResult=updatedTask->put_Enabled(VARIANT_TRUE);
+                            ok=SUCCEEDED(updateResult);
+                            VariantClear(&userId);VariantClear(&password);VariantClear(&sddl);
+                            SysFreeString(user);SysFreeString(security);
+                            ReleaseCom(updatedTask);ReleaseCom(principal);
+                        }else if(ok){
+                            ok=SUCCEEDED(task->put_Enabled(enabled?VARIANT_TRUE:VARIANT_FALSE));
+                        }
+                    }
+                    ReleaseCom(triggers);ReleaseCom(definition);
                 }
                 ReleaseCom(task);ReleaseCom(folder);SysFreeString(folderBstr);SysFreeString(nameBstr);
             }
@@ -522,7 +591,13 @@ bool AddStartupApplication(HWND owner,std::wstring& addedName) {
     OPENFILENAMEW dialog{};dialog.lStructSize=sizeof(dialog);dialog.hwndOwner=owner;dialog.lpstrFilter=filter;
     dialog.lpstrFile=selected.data();dialog.nMaxFile=static_cast<DWORD>(selected.size());dialog.lpstrTitle=L"Choose an app to start with Windows";
     dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR|OFN_HIDEREADONLY;
-    if(!GetOpenFileNameW(&dialog))return false;
+#ifdef NLITE_STARTUP_TESTING
+    const BOOL pickerSucceeded = gStartupFilePickerForTesting ?
+        gStartupFilePickerForTesting(&dialog) : GetOpenFileNameW(&dialog);
+#else
+    const BOOL pickerSucceeded = GetOpenFileNameW(&dialog);
+#endif
+    if(!pickerSucceeded)return false;
     const std::wstring path=selected.data();std::vector<std::wstring> names;
     for(const auto& item:EnumerateStartupItems())if(item.kind==StartupKind::UserRun)names.push_back(item.name);
     addedName=StartupValueNameForPath(path,names);const std::wstring command=QuoteArgument(path);
