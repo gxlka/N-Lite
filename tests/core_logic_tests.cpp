@@ -173,6 +173,11 @@ int main() {
         L"O:BAG:BAD:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)"),
         "task_acl_rejects_auto_inherited_dacl_flags");
 
+    Check(ShouldSuppressCleanerUpdateRetry(true, true, 4, 4),
+        "failed_task_repair_stays_blocked_even_with_current_version_marker");
+    Check(HasExpectedCleanerTaskSecurityDescriptor(
+        L"O:BAG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)(A;;FR;;;SY)"),
+        "task_acl_accepts_actual_windows_scheduler_descriptor");
     SystemMemoryListInfo memoryLists{};
     memoryLists.standby[0] = 2;
     memoryLists.standby[7] = 3;

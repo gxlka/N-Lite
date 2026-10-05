@@ -953,6 +953,7 @@ static bool StartCleanerSetup(bool forAuto, bool forManual) {
     execute.lpParameters = parameters.c_str();
     execute.nShow = SW_HIDE;
     RegWriteDword(L"AutoTaskReady", 0);
+    BlockCleanerSetup(); // Persist the attempt before launching, including app exits during setup.
     if (!ShellExecuteExW(&execute)) {
         DWORD error = GetLastError();
         BlockCleanerSetup();
@@ -1012,13 +1013,15 @@ static bool RequestCleanerTaskRun(bool manual) {
 }
 static void PollCleanerSetup() {
     if (!gCleanerSetupProcess || WaitForSingleObject(gCleanerSetupProcess, 0) != WAIT_OBJECT_0) return;
+    DWORD setupExit = 1;
+    GetExitCodeProcess(gCleanerSetupProcess, &setupExit);
     CloseHandle(gCleanerSetupProcess);
     gCleanerSetupProcess = nullptr;
     const bool forAuto = gCleanerSetupForAuto, forManual = gCleanerSetupForManual;
     gCleanerSetupForAuto = false; gCleanerSetupForManual = false;
     RefreshCleanerSetupState();
     RegWriteDword(L"AutoTaskReady", gCleanerTaskUsable ? 1 : 0);
-    if (!gCleanerInstalled || !gCleanerCurrentVersion) {
+    if (setupExit != 0 || !gCleanerTaskUsable || !gCleanerInstalled || !gCleanerCurrentVersion) {
         BlockCleanerSetup();
         bool fallbackStarted = false;
         if (gCleanerTaskUsable) {

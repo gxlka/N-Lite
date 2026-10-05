@@ -304,7 +304,7 @@ static bool InstallTask(const std::wstring& helperPath, const std::wstring& sid)
     else if (SUCCEEDED(hr)) hr = E_OUTOFMEMORY;
     if (taskName) SysFreeString(taskName);
     BSTR acl = SysAllocString(kTaskDacl);
-    if (SUCCEEDED(hr) && acl) hr = registered->SetSecurityDescriptor(acl, 0);
+    if (SUCCEEDED(hr) && acl) hr = registered->SetSecurityDescriptor(acl, TASK_DONT_ADD_PRINCIPAL_ACE);
     if (acl) SysFreeString(acl);
     BSTR actual = nullptr;
     if (SUCCEEDED(hr)) hr = registered->GetSecurityDescriptor(

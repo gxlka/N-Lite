@@ -26,7 +26,8 @@ static bool WaitStatus(bool manual, uint64_t previousTick) {
             status.standbyTick > previousTick)) {
             std::cout << "standby=" << status.standbyBytes << " before=" << status.manualStandbyBefore
                 << " after=" << status.manualStandbyAfter << " ntstatus=" << status.lastManualStatus << std::endl;
-            return status.standbyValid && (!manual || (status.lastManualStatus >= 0 && status.manualStandbyValid));
+            return status.standbyValid && (!manual || (status.lastManualStatus >= 0 && status.manualStandbyValid &&
+                StandbyCleanSucceeded(status.lastManualStatus, status.manualStandbyBefore, status.manualStandbyAfter, gPageSize)));
         }
         Sleep(100);
     }
@@ -42,11 +43,13 @@ static int NonAdminTest() {
     LoadNt(); LoadSettings();
     bool ok = Check(gCleanerTaskUsable, "existing SYSTEM task recognized by app");
     if (!ok) return 1;
-    gAutoPurge = false; SaveSettings();
+    gAutoPurge = false; gThresholdMB = 64; SaveSettings();
     CleanerStatus previous; ReadCleanerStatus(previous);
     SaveToggleAuto();
     ok &= Check(gAutoPurge, "auto clean remains enabled");
     ok &= Check(WaitStatus(false, previous.standbyTick), "SYSTEM helper produces fresh standby sample");
+    CleanerStatus automatic; ReadCleanerStatus(automatic);
+    ok &= Check(automatic.lastAutoTick > 0 && automatic.lastAutoStatus >= 0, "automatic standby purge ran as SYSTEM");
     SaveToggleAuto(); SaveToggleAuto();
     ok &= Check(elevationAttempts == 0, "repeated toggles never invoke runas");
     LoadSettings();
@@ -86,6 +89,8 @@ int wmain(int argc, wchar_t** argv) {
     if (Check(ok, "create restricted non-admin token")) {
         ok &= Check(Launch(L"\"" + gExePath + L"\" --child", restricted) == 0, "first non-admin app session");
         ok &= Check(Launch(L"\"" + gExePath + L"\" --child", restricted) == 0, "fresh process with persisted task and settings");
+        DeleteFileW((gCleanerRoot + L"\\helper-version.txt").c_str());
+        ok &= Check(Launch(L"\"" + gExePath + L"\" --child", restricted) == 0, "missing version marker still reuses existing task without elevation");
     }
     if (restricted) CloseHandle(restricted); if (original) CloseHandle(original);
     Launch(L"\"" + helper + L"\" --uninstall " + gUserSid);
