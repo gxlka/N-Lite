@@ -249,6 +249,7 @@ int main() {
     standbyStatus.manualStandbyValid = true;
     standbyStatus.manualStandbyBefore = 80u * 1024u * 1024u;
     standbyStatus.manualStandbyAfter = 4u * 1024u * 1024u;
+    standbyStatus.autoStandbyCaptured = true;
     standbyStatus.autoStandbyValid = true;
     standbyStatus.autoStandbyBefore = 96u * 1024u * 1024u;
     standbyStatus.autoStandbyAfter = 8u * 1024u * 1024u;
@@ -259,16 +260,27 @@ int main() {
         parsedStandbyStatus.manualStandbyValid &&
         parsedStandbyStatus.manualStandbyBefore == standbyStatus.manualStandbyBefore &&
         parsedStandbyStatus.manualStandbyAfter == standbyStatus.manualStandbyAfter &&
+        parsedStandbyStatus.autoStandbyCaptured &&
         parsedStandbyStatus.autoStandbyValid &&
         parsedStandbyStatus.autoStandbyBefore == standbyStatus.autoStandbyBefore &&
         parsedStandbyStatus.autoStandbyAfter == standbyStatus.autoStandbyAfter,
         "cleaner_status_round_trip_preserves_manual_and_auto_standby_measurements");
+    CleanerStatus unavailableAutoStatus;
+    unavailableAutoStatus.lastAutoTick = 42;
+    unavailableAutoStatus.autoStandbyCaptured = true;
+    unavailableAutoStatus.autoStandbyBefore = 64u * 1024u * 1024u;
+    CleanerStatus parsedUnavailableAutoStatus;
+    Check(ParseCleanerStatus(SerializeCleanerStatus(unavailableAutoStatus), parsedUnavailableAutoStatus) &&
+        parsedUnavailableAutoStatus.lastAutoTick == 42 && parsedUnavailableAutoStatus.autoStandbyCaptured &&
+        !parsedUnavailableAutoStatus.autoStandbyValid,
+        "cleaner_status_distinguishes_missing_auto_measurement_from_legacy_status");
     CleanerStatus versionTwoStatus;
     Check(ParseCleanerStatus(L"version=2\nhelper_version=5\ncompleted_manual_request_id=0\n"
             L"last_manual_status=0\nlast_auto_tick=10\nlast_auto_status=0\nauto_armed=1\n"
             L"standby_valid=1\nstandby_bytes=4096\nstandby_tick=11\n"
             L"manual_standby_valid=0\nmanual_standby_before=0\nmanual_standby_after=0\n",
-            versionTwoStatus) && versionTwoStatus.standbyValid && !versionTwoStatus.autoStandbyValid,
+            versionTwoStatus) && versionTwoStatus.standbyValid &&
+        !versionTwoStatus.autoStandbyCaptured && !versionTwoStatus.autoStandbyValid,
         "new_app_reads_version_two_cleaner_status_without_auto_measurements");
     CleanerStatus legacyStatus;
     Check(ParseCleanerStatus(L"version=1\nhelper_version=1\ncompleted_manual_request_id=0\n"

@@ -1124,10 +1124,12 @@ static void PollCleanerStatus() {
     }
     if (latest.lastAutoTick && latest.lastAutoTick != gLastSeenPurgeTick) {
         gLastSeenPurgeTick = latest.lastAutoTick;
-        const bool exactSizesKnown = latest.autoStandbyValid;
-        const bool sizesKnown = exactSizesKnown || (previous.standbyValid && latest.standbyValid);
-        const uint64_t before = exactSizesKnown ? latest.autoStandbyBefore : previous.standbyBytes;
-        const uint64_t after = exactSizesKnown ? latest.autoStandbyAfter : latest.standbyBytes;
+        const bool sizesKnown = latest.autoStandbyCaptured ? latest.autoStandbyValid :
+            (previous.standbyValid && latest.standbyValid);
+        const uint64_t before = latest.autoStandbyCaptured ?
+            latest.autoStandbyBefore : previous.standbyBytes;
+        const uint64_t after = latest.autoStandbyCaptured ?
+            latest.autoStandbyAfter : latest.standbyBytes;
         const bool reduced = sizesKnown && StandbyCleanSucceeded(
             static_cast<LONG>(latest.lastAutoStatus), before, after, gPageSize);
         if (reduced) {

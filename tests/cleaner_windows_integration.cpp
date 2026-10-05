@@ -126,6 +126,7 @@ static int StartupUiTest() {
         syntheticCleanerStatus.standbyBytes = 96ull * 1024 * 1024;
         syntheticCleanerStatus.lastAutoTick = 200;
         syntheticCleanerStatus.lastAutoStatus = 0;
+        syntheticCleanerStatus.autoStandbyCaptured = true;
         syntheticCleanerStatus.autoStandbyValid = true;
         syntheticCleanerStatus.autoStandbyBefore = 128ull * 1024 * 1024;
         syntheticCleanerStatus.autoStandbyAfter = 64ull * 1024 * 1024;
@@ -145,11 +146,27 @@ static int StartupUiTest() {
         syntheticCleanerStatus.lastAutoTick = 300;
         syntheticCleanerStatus.autoStandbyBefore = 64ull * 1024 * 1024;
         syntheticCleanerStatus.autoStandbyAfter = 64ull * 1024 * 1024;
+        syntheticCleanerStatus.autoStandbyCaptured = true;
         trayBalloonCount = 0;
         WndProc(controller, WM_TIMER, TIMER_REFRESH, 0);
         ok &= Check(trayBalloonCount == 1 &&
             trayBalloonText.find(L"Auto clean failed: standby size unchanged") == 0,
             "hidden tray does not report unrelated standby changes as a clean success");
+
+        gCleanerStatus.lastAutoTick = 300;
+        gLastSeenPurgeTick = 300;
+        syntheticCleanerStatus.lastAutoTick = 400;
+        syntheticCleanerStatus.standbyValid = true;
+        syntheticCleanerStatus.standbyBytes = 0;
+        syntheticCleanerStatus.autoStandbyCaptured = true;
+        syntheticCleanerStatus.autoStandbyValid = false;
+        syntheticCleanerStatus.autoStandbyBefore = 64ull * 1024 * 1024;
+        syntheticCleanerStatus.autoStandbyAfter = 0;
+        trayBalloonCount = 0;
+        WndProc(controller, WM_TIMER, TIMER_REFRESH, 0);
+        ok &= Check(trayBalloonCount == 1 &&
+            trayBalloonText.find(L"Auto clean failed: standby size unchanged or unavailable") == 0,
+            "hidden tray treats an unavailable auto-clean measurement as unverifiable");
         gCleanerStatusReaderForTests = nullptr;
         gCleanerTaskUsable = oldTaskUsable;
         gTrayAdded = false;

@@ -518,6 +518,7 @@ static bool Run(const std::wstring& sid) {
             status.lastAutoStatus = static_cast<int32_t>(result);
             uint64_t after = 0;
             const bool afterValid = ReadStandbyBytes(after);
+            status.autoStandbyCaptured = true;
             status.autoStandbyValid = afterValid;
             status.autoStandbyBefore = before;
             status.autoStandbyAfter = afterValid ? after : 0;

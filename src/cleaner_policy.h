@@ -68,6 +68,7 @@ struct CleanerStatus {
     bool manualStandbyValid = false;
     uint64_t manualStandbyBefore = 0;
     uint64_t manualStandbyAfter = 0;
+    bool autoStandbyCaptured = false;
     bool autoStandbyValid = false;
     uint64_t autoStandbyBefore = 0;
     uint64_t autoStandbyAfter = 0;
@@ -305,8 +306,8 @@ inline bool ParseCleanerStatus(const std::wstring& text, CleanerStatus& output) 
         L"version", L"helper_version", L"completed_manual_request_id", L"last_manual_status",
         L"last_auto_tick", L"last_auto_status", L"auto_armed", L"standby_valid",
         L"standby_bytes", L"standby_tick", L"manual_standby_valid",
-        L"manual_standby_before", L"manual_standby_after", L"auto_standby_valid",
-        L"auto_standby_before", L"auto_standby_after"
+        L"manual_standby_before", L"manual_standby_after", L"auto_standby_captured",
+        L"auto_standby_valid", L"auto_standby_before", L"auto_standby_after"
     };
     if (!cleaner_policy_detail::ParseFields(text, fields)) return false;
     uint64_t version = 0;
@@ -349,10 +350,14 @@ inline bool ParseCleanerStatus(const std::wstring& text, CleanerStatus& output) 
         parsed.manualStandbyAfter = manualStandbyAfter;
     }
     if (version == 3) {
-        uint64_t autoStandbyValid = 0, autoStandbyBefore = 0, autoStandbyAfter = 0;
-        if (!cleaner_policy_detail::ParseUnsigned(fields[L"auto_standby_valid"], autoStandbyValid) || autoStandbyValid > 1 ||
+        uint64_t autoStandbyCaptured = 0, autoStandbyValid = 0;
+        uint64_t autoStandbyBefore = 0, autoStandbyAfter = 0;
+        if (!cleaner_policy_detail::ParseUnsigned(fields[L"auto_standby_captured"], autoStandbyCaptured) ||
+            autoStandbyCaptured > 1 ||
+            !cleaner_policy_detail::ParseUnsigned(fields[L"auto_standby_valid"], autoStandbyValid) || autoStandbyValid > 1 ||
             !cleaner_policy_detail::ParseUnsigned(fields[L"auto_standby_before"], autoStandbyBefore) ||
             !cleaner_policy_detail::ParseUnsigned(fields[L"auto_standby_after"], autoStandbyAfter)) return false;
+        parsed.autoStandbyCaptured = autoStandbyCaptured != 0;
         parsed.autoStandbyValid = autoStandbyValid != 0;
         parsed.autoStandbyBefore = autoStandbyBefore;
         parsed.autoStandbyAfter = autoStandbyAfter;
@@ -380,6 +385,7 @@ inline std::wstring SerializeCleanerStatus(const CleanerStatus& status) {
         L"\nmanual_standby_valid=" + std::to_wstring(status.manualStandbyValid ? 1 : 0) +
         L"\nmanual_standby_before=" + std::to_wstring(status.manualStandbyBefore) +
         L"\nmanual_standby_after=" + std::to_wstring(status.manualStandbyAfter) +
+        L"\nauto_standby_captured=" + std::to_wstring(status.autoStandbyCaptured ? 1 : 0) +
         L"\nauto_standby_valid=" + std::to_wstring(status.autoStandbyValid ? 1 : 0) +
         L"\nauto_standby_before=" + std::to_wstring(status.autoStandbyBefore) +
         L"\nauto_standby_after=" + std::to_wstring(status.autoStandbyAfter) + L"\n";
