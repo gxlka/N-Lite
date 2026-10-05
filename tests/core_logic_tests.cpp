@@ -176,14 +176,14 @@ int main() {
     SystemMemoryListInfo memoryLists{};
     memoryLists.standby[0] = 2;
     memoryLists.standby[7] = 3;
-    Check(sizeof(memoryLists) == 88, "system_memory_list_information_uses_fixed_32_bit_fields");
+    Check(sizeof(memoryLists) == 22 * sizeof(uintptr_t), "system_memory_list_information_uses_native_pointer_sized_counts");
     Check(StandbyBytesFromPageCounts(memoryLists, 4096) == 5u * 4096u,
         "standby_bytes_sum_all_eight_priority_buckets");
     memoryLists.freePageCount = 7;
-    Check(offsetof(SystemMemoryListInfo, freePageCount) == 4 &&
-        offsetof(SystemMemoryListInfo, standby) == 20 &&
+    Check(offsetof(SystemMemoryListInfo, freePageCount) == sizeof(uintptr_t) &&
+        offsetof(SystemMemoryListInfo, standby) == 5 * sizeof(uintptr_t) &&
         FreeBytesFromPageCount(memoryLists, 4096) == 7u * 4096u,
-        "memory_panel_reads_the_32_bit_free_and_standby_counters");
+        "memory_panel_reads_native_free_and_standby_counters");
     MemoryQueryFixture queryFixture;
     queryFixture.response.standby[2] = 11;
     queryFixture.response.freePageCount = 17;

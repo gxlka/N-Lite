@@ -59,7 +59,9 @@ static int NonAdminTest() {
     return ok ? 0 : 1;
 }
 static DWORD Launch(std::wstring command, HANDLE token = nullptr) {
-    STARTUPINFOW startup{}; startup.cb = sizeof(startup); PROCESS_INFORMATION process{};
+    STARTUPINFOW startup{}; startup.cb = sizeof(startup); startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE); startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    startup.hStdError = GetStdHandle(STD_ERROR_HANDLE); PROCESS_INFORMATION process{};
     BOOL started = token ? CreateProcessAsUserW(token, nullptr, command.data(), nullptr, nullptr,
         TRUE, 0, nullptr, nullptr, &startup, &process) : CreateProcessW(nullptr, command.data(),
         nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &process);

@@ -70,14 +70,14 @@ struct CleanerStatus {
 };
 
 struct SystemMemoryListInfo {
-    uint32_t zeroPageCount = 0;
-    uint32_t freePageCount = 0;
-    uint32_t modifiedPageCount = 0;
-    uint32_t modifiedNoWritePageCount = 0;
-    uint32_t badPageCount = 0;
-    uint32_t standby[8]{};
-    uint32_t repurposed[8]{};
-    uint32_t modifiedPageCountPageFile = 0;
+    uintptr_t zeroPageCount = 0;
+    uintptr_t freePageCount = 0;
+    uintptr_t modifiedPageCount = 0;
+    uintptr_t modifiedNoWritePageCount = 0;
+    uintptr_t badPageCount = 0;
+    uintptr_t standby[8]{};
+    uintptr_t repurposed[8]{};
+    uintptr_t modifiedPageCountPageFile = 0;
 };
 
 inline constexpr uint32_t kSystemMemoryListInformationClass = 80;
@@ -175,7 +175,7 @@ inline bool HasExpectedCleanerTaskSecurityDescriptor(const std::wstring& descrip
 
 inline uint64_t StandbyBytesFromPageCounts(const SystemMemoryListInfo& info, uint32_t pageSize) {
     uint64_t pages = 0;
-    for (uint32_t count : info.standby) pages += count;
+    for (uintptr_t count : info.standby) pages += count;
     return pages * pageSize;
 }
 

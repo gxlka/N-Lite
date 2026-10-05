@@ -317,30 +317,39 @@ static bool InstallTask(const std::wstring& helperPath, const std::wstring& sid)
     return SUCCEEDED(hr);
 }
 
+static bool InstallFailure(unsigned line) {
+    const std::wstring message = L"N-Lite cleaner installation failed at line " +
+        std::to_wstring(line) + L", Windows error " + std::to_wstring(GetLastError()) + L"\n";
+    OutputDebugStringW(message.c_str());
+    const std::string ascii(message.begin(), message.end()); DWORD written = 0;
+    WriteFile(GetStdHandle(STD_ERROR_HANDLE), ascii.data(), static_cast<DWORD>(ascii.size()), &written, nullptr);
+    return false;
+}
+
 static bool Install(const std::wstring& sid) {
-    if (!IsAdmin()) return false;
+    if (!IsAdmin()) return InstallFailure(__LINE__);
     PSID sidMemory = nullptr;
-    if (!IsValidCleanerSid(sid) || !ConvertStringSidToSidW(sid.c_str(), &sidMemory)) return false;
+    if (!IsValidCleanerSid(sid) || !ConvertStringSidToSidW(sid.c_str(), &sidMemory)) return InstallFailure(__LINE__);
     LocalFree(sidMemory);
 
     const std::wstring root = ProgramDataRoot();
-    if (root.empty()) return false;
+    if (root.empty()) return InstallFailure(__LINE__);
     const std::wstring rootAcl = L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)";
-    if (!SecureDirectory(root, rootAcl)) return false;
+    if (!SecureDirectory(root, rootAcl)) return InstallFailure(__LINE__);
 
     std::wstring source;
-    if (!CurrentHelperPath(source)) return false;
+    if (!CurrentHelperPath(source)) return InstallFailure(__LINE__);
     const std::wstring installed = Join(root, L"N-Lite-Cleaner.exe");
     DWORD attrs = GetFileAttributesW(installed.c_str());
-    if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
-    if (_wcsicmp(source.c_str(), installed.c_str()) != 0 && !CopyFileW(source.c_str(), installed.c_str(), FALSE)) return false;
+    if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) return InstallFailure(__LINE__);
+    if (_wcsicmp(source.c_str(), installed.c_str()) != 0 && !CopyFileW(source.c_str(), installed.c_str(), FALSE)) return InstallFailure(__LINE__);
     const std::wstring helperAcl = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)";
     HANDLE helper = OpenNoReparse(installed, READ_CONTROL | WRITE_DAC | WRITE_OWNER,
         FILE_SHARE_READ | FILE_SHARE_DELETE, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
-    if (helper == INVALID_HANDLE_VALUE) return false;
+    if (helper == INVALID_HANDLE_VALUE) return InstallFailure(__LINE__);
     bool secured = ApplyDacl(helper, helperAcl);
     CloseHandle(helper);
-    if (!secured) return false;
+    if (!secured) return InstallFailure(__LINE__);
 
     const std::wstring userAce = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x12019f;;;" + sid + L")";
     const std::wstring readAce = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x120089;;;" + sid + L")";
@@ -352,24 +361,24 @@ static bool Install(const std::wstring& sid) {
     if (!SecureFile(config, userAce, GENERIC_READ | GENERIC_WRITE,
                     SerializeCleanerSettings(defaults)) ||
         !SecureFile(status, readAce, GENERIC_READ,
-                    SerializeCleanerStatus(empty))) return false;
+                    SerializeCleanerStatus(empty))) return InstallFailure(__LINE__);
     std::wstring saved;
     CleanerSettings checkedSettings;
     if (!ReadTextFile(config, saved) || !ParseCleanerSettings(saved, checkedSettings)) {
-        if (!WriteTextFile(config, SerializeCleanerSettings(defaults))) return false;
+        if (!WriteTextFile(config, SerializeCleanerSettings(defaults))) return InstallFailure(__LINE__);
     }
     CleanerStatus checkedStatus;
     if (!ReadTextFile(status, saved) || !ParseCleanerStatus(saved, checkedStatus)) {
-        if (!WriteTextFile(status, SerializeCleanerStatus(empty))) return false;
+        if (!WriteTextFile(status, SerializeCleanerStatus(empty))) return InstallFailure(__LINE__);
     }
 
-    if (!InstallTask(installed, sid)) return false;
+    if (!InstallTask(installed, sid)) return InstallFailure(__LINE__);
     const std::wstring versionPath = Join(root, L"helper-version.txt");
     const std::wstring versionAcl = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GR;;;BU)";
     if (!SecureFile(versionPath, versionAcl, GENERIC_READ, std::wstring(kHelperVersion) + L"\n") ||
         !WriteTextFile(versionPath, std::wstring(kHelperVersion) + L"\n")) {
         RunSchtasks({L"/Delete", L"/F", L"/TN", TaskName(sid)});
-        return false;
+        return InstallFailure(__LINE__);
     }
     return true;
 }
