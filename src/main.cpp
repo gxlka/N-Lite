@@ -499,7 +499,7 @@ static std::wstring CleanerStatusFile() {
     return gCleanerRoot.empty() || gUserSid.empty() ? L"" : gCleanerRoot + L"\\status-" + gUserSid + L".txt";
 }
 static bool ReadCleanerText(const std::wstring& path, std::wstring& text) {
-    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
     if (file == INVALID_HANDLE_VALUE) return false;
     BY_HANDLE_FILE_INFORMATION info{};

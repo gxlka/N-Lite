@@ -116,7 +116,7 @@ static bool RunSchtasks(const std::vector<std::wstring>& args) {
     }
     si.wShowWindow = SW_HIDE;
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(nullptr, &command[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
+    if (!CreateProcessW(nullptr, &command[0], nullptr, nullptr, (si.dwFlags & STARTF_USESTDHANDLES) != 0, CREATE_NO_WINDOW,
         nullptr, nullptr, &si, &pi)) return false;
     DWORD wait = WaitForSingleObject(pi.hProcess, 30000), code = 1;
     if (wait == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
@@ -244,7 +244,7 @@ static bool SecureFile(const std::wstring& path, const std::wstring& sddl, DWORD
 }
 
 static bool ReadTextFile(const std::wstring& path, std::wstring& text) {
-    HANDLE file = OpenNoReparse(path, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    HANDLE file = OpenNoReparse(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
     if (file == INVALID_HANDLE_VALUE) return false;
     LARGE_INTEGER size{};
     bool ok = GetFileSizeEx(file, &size) && size.QuadPart >= 0 && size.QuadPart <= 32768 &&
