@@ -1522,8 +1522,7 @@ static void DrawProcesses(HDC dc, int cw, int ch) {
     const int rowH=kUiProcessRowHeightPx,firstY=tableY+40;
     const int viewportHeight=(std::max)(0,static_cast<int>(table.bottom-firstY-31));
     const double contentHeight=static_cast<double>(gVisible.size())*rowH;
-    gProcessScroll.currentPx=ClampUiScroll(gProcessScroll.currentPx,contentHeight,viewportHeight);
-    gProcessScroll.targetPx=ClampUiScroll(gProcessScroll.targetPx,contentHeight,viewportHeight);
+    ClampUiScrollMotion(gProcessScroll,contentHeight,viewportHeight);
     const UiScrollFrame frame=ComputeUiScrollFrame(gProcessScroll.currentPx,rowH,firstY,
         viewportHeight,static_cast<int>(gVisible.size()));
     const int maxScrollPx=(std::max)(0,static_cast<int>(contentHeight-viewportHeight));
@@ -1730,8 +1729,7 @@ static void DrawStartup(HDC dc,int cw,int ch) {
     const int rowTop=list.top+48,rowH=kUiStartupRowHeightPx,footerY=list.bottom-32;
     const int viewportHeight=(std::max)(0,footerY-rowTop);
     const double contentHeight=static_cast<double>(gStartupEntries.size())*rowH;
-    gStartupScroll.currentPx=ClampUiScroll(gStartupScroll.currentPx,contentHeight,viewportHeight);
-    gStartupScroll.targetPx=ClampUiScroll(gStartupScroll.targetPx,contentHeight,viewportHeight);
+    ClampUiScrollMotion(gStartupScroll,contentHeight,viewportHeight);
     const UiScrollFrame frame=ComputeUiScrollFrame(gStartupScroll.currentPx,rowH,rowTop,
         viewportHeight,static_cast<int>(gStartupEntries.size()));
     const int maxScrollPx=(std::max)(0,static_cast<int>(contentHeight-viewportHeight));
