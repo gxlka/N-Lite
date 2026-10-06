@@ -1,6 +1,8 @@
 #include "cleaner_policy.h"
 #include "process_grouping.h"
 #include "ui_layout.h"
+#include "ui_motion.h"
+#include "ui_metrics.h"
 #include "ui_theme.h"
 #include "timer_slider.h"
 #include "startup_policy.h"
@@ -362,6 +364,10 @@ int main() {
             dimensions.first == 960 ? "memory_panels_and_timer_fit_960x620" :
             "memory_panels_and_timer_fit_1240x830");
     }
+    const MemoryLayout alignedLayout = ComputeMemoryLayout(1240, 830);
+    Check(alignedLayout.memory.left == 32 && alignedLayout.memory.top % 8 == 0 &&
+        alignedLayout.cleaner.left - alignedLayout.memory.right == 8,
+        "memory_panels_follow_eight_pixel_grid_and_gap");
 
     const UiPalette dark = PaletteFor(true), light = PaletteFor(false);
     Check(dark.background != light.background && dark.surface != light.surface && dark.text != light.text,
@@ -369,6 +375,69 @@ int main() {
     Check(dark.background != dark.text && light.background != light.text &&
         dark.surface != dark.border && light.surface != light.border,
         "theme_text_and_surface_colors_are_separate");
+    Check(UiLogicalToDevice(8, 96) == 8 && UiLogicalToDevice(8, 120) == 10 &&
+        UiLogicalToDevice(8, 144) == 12, "ui_dpi_maps_grid_edges_to_device_pixels");
+    const int dpiRoundTrip = UiDeviceToLogical(UiLogicalToDevice(11, 120), 120);
+    Check(UiDeviceToLogical(10, 120) == 8 && UiDeviceToLogical(12, 144) == 8 &&
+        dpiRoundTrip >= 10 && dpiRoundTrip <= 12,
+        "ui_dpi_round_trip_has_at_most_one_pixel_error");
+    Check(kUiSpacingPx == 8 && kUiEmojiSizePx == 20 && kUiButtonHeightPx == 40 &&
+        kUiProcessRowHeightPx == 44 && kUiStartupRowHeightPx == 60 && kUiCornerRadiusPx == 12,
+        "ui_visual_tokens_use_compact_fixed_logical_sizes");
+    Check(!ShouldScheduleUiAnimationFrame(false, true, false, true) &&
+        !ShouldScheduleUiAnimationFrame(true, false, false, true) &&
+        !ShouldScheduleUiAnimationFrame(true, true, true, true) &&
+        !ShouldScheduleUiAnimationFrame(true, true, false, false) &&
+        ShouldScheduleUiAnimationFrame(true, true, false, true),
+        "ui_animation_timer_stops_when_idle_minimized_or_reduced_motion");
+
+    Check(ClampUiScroll(-4, 1000, 300) == 0 && ClampUiScroll(900, 1000, 300) == 700 &&
+        ClampUiScroll(90, 100, 300) == 0, "ui_scroll_clamps_to_content_bounds");
+    UiScrollMotion scroll{};
+    SetUiScrollTarget(scroll, 500, 1000, 300, 160);
+    Check(AdvanceUiScroll(scroll, 80, true) && scroll.currentPx > 400 && scroll.currentPx < 500,
+        "ui_scroll_uses_elapsed_time_easing");
+    const double beforeRetarget = scroll.currentPx;
+    SetUiScrollTarget(scroll, 600, 1000, 300, 160);
+    Check(scroll.currentPx == beforeRetarget, "ui_scroll_retarget_does_not_jump");
+    Check(!AdvanceUiScroll(scroll, 160, false) && scroll.currentPx == 600,
+        "ui_scroll_disabled_motion_completes_immediately");
+    UiScrollMotion resizedScroll{};
+    SetUiScrollTarget(resizedScroll, 600, 1000, 300, 160);
+    AdvanceUiScroll(resizedScroll, 50, true);
+    const double beforeResize = resizedScroll.currentPx;
+    ClampUiScrollMotion(resizedScroll, 800, 300);
+    Check(resizedScroll.targetPx == 500 && resizedScroll.currentPx == beforeResize &&
+        resizedScroll.startPx == beforeResize && resizedScroll.elapsedMs == 0,
+        "ui_scroll_resize_rebases_clamped_target");
+    AdvanceUiScroll(resizedScroll, 16, true);
+    Check(resizedScroll.currentPx > beforeResize && resizedScroll.currentPx < 500,
+        "ui_scroll_resize_keeps_easing_toward_new_bound");
+    UiScrollMotion shortenedScroll{650, 500, 700, 120, 160};
+    ClampUiScrollMotion(shortenedScroll, 800, 300);
+    Check(shortenedScroll.currentPx == 500 && shortenedScroll.targetPx == 500 &&
+        shortenedScroll.startPx == 500,
+        "ui_scroll_resize_clamps_active_position_without_replay");
+    const UiScrollFrame frame = ComputeUiScrollFrame(45.5, 44, 120, 132, 10);
+    Check(frame.firstItem == 1 && frame.firstRowTopPx == 119 && frame.visibleCount == 4,
+        "ui_scroll_frame_aligns_rows_at_fractional_offsets");
+    UiTween tween{};
+    SetUiTweenTarget(tween, 1.0, 120);
+    Check(AdvanceUiTween(tween, 60, true) && tween.current > 0 && tween.current < 1,
+        "ui_tween_interpolates_transitions");
+    Check(!AdvanceUiTween(tween, 60, true) && tween.current == 1,
+        "ui_tween_finishes_at_exact_target");
+    Check(ComputeUiScrollFrame(0, 0, 0, 0, 0).visibleCount == 0,
+        "ui_scroll_empty_viewport_has_no_rows");
+    UiScrollMotion wheel{};
+    SetUiScrollWheelTarget(wheel, -120, 1000, 300);
+    SetUiScrollWheelTarget(wheel, -120, 1000, 300);
+    Check(wheel.targetPx == 192 && wheel.currentPx == 0,
+        "ui_wheel_bursts_accumulate_without_jumping");
+    SetUiScrollWheelTarget(wheel, 1200, 1000, 300);
+    Check(wheel.targetPx == 0, "ui_wheel_target_clamps_at_content_start");
+    SetUiScrollWheelTarget(wheel, -1200, 1000, 300);
+    Check(wheel.targetPx == 700, "ui_wheel_target_clamps_at_content_end");
 
     return failures == 0 ? 0 : 1;
 }
