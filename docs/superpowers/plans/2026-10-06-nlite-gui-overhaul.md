@@ -4,6 +4,8 @@
 
 **Goal:** Refresh the complete N-Lite GUI with fixed logical-pixel sizing, crisp emoji/vector icons, smooth pixel scrolling, and restrained animations while preserving all app behavior.
 
+**Implementation status:** The UI changes and 88 portable logic assertions are complete. Windows build/render tests and live DPI visual checks are pending.
+
 **Architecture:** Keep the existing single-process C++17 Win32 app and GDI page painter. Add small, platform-independent motion and DPI math helpers with unit tests; render the few color emoji glyphs through native Direct2D/DirectWrite and draw action icons with GDI; use the existing buffered paint path for the shared UI.
 
 **Tech Stack:** C++17, Win32/GDI, Direct2D, DirectWrite, CMake, CTest, GitHub Actions on Windows.
