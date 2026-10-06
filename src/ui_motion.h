@@ -35,6 +35,19 @@ inline double ClampUiScroll(double requestedPx, double contentHeightPx, double v
     return (std::max)(0.0, (std::min)(requestedPx, maxOffset));
 }
 
+inline void ClampUiScrollMotion(UiScrollMotion& motion, double contentHeightPx,
+                                double viewportHeightPx) {
+    const double current = ClampUiScroll(motion.currentPx, contentHeightPx, viewportHeightPx);
+    const double target = ClampUiScroll(motion.targetPx, contentHeightPx, viewportHeightPx);
+    if (current == motion.currentPx && target == motion.targetPx) return;
+
+    motion.currentPx = current;
+    motion.targetPx = target;
+    motion.startPx = current;
+    motion.elapsedMs = 0.0;
+    if (current == target) motion.durationMs = 0.0;
+}
+
 inline void SetUiScrollTarget(UiScrollMotion& motion, double requestedPx, double contentHeightPx,
                               double viewportHeightPx, double durationMs = 160.0) {
     motion.startPx = motion.currentPx;
