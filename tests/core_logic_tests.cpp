@@ -402,6 +402,22 @@ int main() {
     Check(scroll.currentPx == beforeRetarget, "ui_scroll_retarget_does_not_jump");
     Check(!AdvanceUiScroll(scroll, 160, false) && scroll.currentPx == 600,
         "ui_scroll_disabled_motion_completes_immediately");
+    UiScrollMotion resizedScroll{};
+    SetUiScrollTarget(resizedScroll, 600, 1000, 300, 160);
+    AdvanceUiScroll(resizedScroll, 50, true);
+    const double beforeResize = resizedScroll.currentPx;
+    ClampUiScrollMotion(resizedScroll, 800, 300);
+    Check(resizedScroll.targetPx == 500 && resizedScroll.currentPx == beforeResize &&
+        resizedScroll.startPx == beforeResize && resizedScroll.elapsedMs == 0,
+        "ui_scroll_resize_rebases_clamped_target");
+    AdvanceUiScroll(resizedScroll, 16, true);
+    Check(resizedScroll.currentPx > beforeResize && resizedScroll.currentPx < 500,
+        "ui_scroll_resize_keeps_easing_toward_new_bound");
+    UiScrollMotion shortenedScroll{650, 500, 700, 120, 160};
+    ClampUiScrollMotion(shortenedScroll, 800, 300);
+    Check(shortenedScroll.currentPx == 500 && shortenedScroll.targetPx == 500 &&
+        shortenedScroll.startPx == 500,
+        "ui_scroll_resize_clamps_active_position_without_replay");
     const UiScrollFrame frame = ComputeUiScrollFrame(45.5, 44, 120, 132, 10);
     Check(frame.firstItem == 1 && frame.firstRowTopPx == 119 && frame.visibleCount == 4,
         "ui_scroll_frame_aligns_rows_at_fractional_offsets");
