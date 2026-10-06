@@ -1,7 +1,7 @@
 # N-Lite GUI redesign
 
 **Date:** 2026-10-06  
-**Status:** Design direction approved by the user; implementation pending review of this spec.
+**Status:** Approved and implemented; Windows build and visual verification pending.
 
 ## Purpose
 
