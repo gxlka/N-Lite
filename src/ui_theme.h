@@ -2,6 +2,13 @@
 
 #include <cstdint>
 
+inline constexpr int kUiSpacingPx = 8;
+inline constexpr int kUiEmojiSizePx = 20;
+inline constexpr int kUiButtonHeightPx = 40;
+inline constexpr int kUiProcessRowHeightPx = 44;
+inline constexpr int kUiStartupRowHeightPx = 60;
+inline constexpr int kUiCornerRadiusPx = 12;
+
 struct UiPalette {
     bool dark = true;
     uint32_t background = 0;
